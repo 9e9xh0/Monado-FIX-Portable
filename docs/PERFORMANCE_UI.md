@@ -13,7 +13,7 @@ Ejecutar `Play Monado.bat`. En **Inicio**, elegir por separado calidad y objetiv
 | Patata | 360–540 píxeles de altura | Los mismos recortes seguros que Rendimiento, con menor resolución |
 | Personalizado | Manual | Conserva los cambios individuales y sus límites |
 
-Los rangos conservan el aspecto y no superan la salida. La resolución de menús/HUD del propio juego también puede perder nitidez. Cambiar los FPS, el desenfoque del juego o la política de recursos requiere reiniciar para aplicar el perfil completo. Cambiar calidad no cambia los FPS solicitados, GPU, volumen, controles ni guardados.
+Los rangos conservan el aspecto y no superan la salida. La resolución de menús/HUD del propio juego también puede perder nitidez. El objetivo de FPS se aplica al momento desde el menú del juego (F1); en el launcher, los ajustes se aplican al siguiente inicio. Cambiar el desenfoque del juego o la política de recursos requiere reiniciar para aplicar el perfil completo. Cambiar calidad no cambia los FPS solicitados, GPU, volumen, controles ni guardados.
 
 Los interruptores de oclusión temporal, reflejos, bloom, rayos y sombras de nubes son **experimentales y opcionales**. Permanecen sin aplicar en los perfiles hasta completar su aceptación visual. Se editan en memoria las claves ya existentes de `lib_nx.ini`; los mods se leen primero y `XCDE_LIBNX` mantiene su prioridad como override explícito. No se añaden nuevos shaders a la lista de omisiones.
 

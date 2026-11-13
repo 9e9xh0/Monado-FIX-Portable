@@ -73,6 +73,17 @@ class VulkanSourceContracts(unittest.TestCase):
         self.assertIn("g_settings.gpu_index", DEVICE)
         self.assertIn("GPU_PROFILE_COMPATIBILITY", header)
 
+    def test_fps_target_changes_apply_without_a_restart(self):
+        framepace = (ROOT / "runtime/hle/framepace.c").read_text(encoding="utf-8")
+        controls = (ROOT / "runtime/ui/quality_controls.h").read_text(encoding="utf-8")
+        menu = (ROOT / "runtime/ui/menu_vk.cpp").read_text(encoding="utf-8")
+        self.assertIn("fps != applied_fps", framepace)
+        self.assertIn("XcdeFpsTarget target = xcde_fps_target(fps)", framepace)
+        self.assertIn("limiter_reset_learning()", framepace)
+        self.assertIn("vsync_fifo_wanted() != g_vsync_fifo", DEVICE)
+        self.assertNotIn("require restarting the game", controls)
+        self.assertNotIn("FPS (al reiniciar)", menu)
+
     def test_gpu_menu_exposes_restart_scoped_controls_and_diagnostics(self):
         menu = (ROOT / "runtime/ui/menu_vk.cpp").read_text(encoding="utf-8")
         self.assertIn('BeginTabItem(T("GPU / Vulkan"))', menu)

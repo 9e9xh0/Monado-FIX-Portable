@@ -258,14 +258,25 @@ static uint64_t stat_pace_over;
 
 void vk_pace_frame(void) {
     if (diag_deterministic()) return;  // [XCDE] T029: real-time measurements must not steer the game
-    static int on = -1;
     // (only for the game's own 30 fps: with the FPS option above 30 the frame interval is forced every frame, and a
     // "slow" counter would only make the game's internals believe the GPU is slow)
-    if (on < 0) { const char *e = getenv("LARECOMP_PACE"); on = e ? atoi(e) != 0 : g_settings.fps == 30 && !getenv("XCDE_FPS_INTERVAL"); }
+    static int forced = -2;
+    if (forced == -2) { const char *e = getenv("LARECOMP_PACE"); forced = e ? atoi(e) != 0 : -1; }
+    int enabled = forced >= 0 ? forced : g_settings.fps == 30 && !getenv("XCDE_FPS_INTERVAL");
+    static int on = -1;
     static uint64_t last, last_wait;
     static uint8_t over[60];
     static int idx, nover, calm;
     static double avg;  // busy ms, moving average (~20 frames)
+    if (enabled != on) {  // the F1 menu changed the target: old measurements and a forced 30 fps mode do not carry over
+        on = enabled;
+        last = last_wait = 0;
+        memset(over, 0, sizeof over);
+        idx = nover = calm = 0;
+        avg = 0;
+        pace_slow = false;
+        LOG("[pace] %s (FPS target %d)\n", on ? "on" : "off", g_settings.fps);
+    }
     uint64_t now = plat_now_ns(), w = g_blocked_ns;
     uint64_t p = now - last, wt = w - last_wait;
     bool first = !last;

@@ -11,6 +11,14 @@ int main(void) {
     assert(!xcde_repeat_has_budget(start,start+55000000,30,60));
     assert(!xcde_repeat_has_budget(start,start,0,60));
     assert(!xcde_repeat_has_budget(start,start-1,30,60));
+    XcdeFpsTarget t30=xcde_fps_target(30), t60=xcde_fps_target(60), t120=xcde_fps_target(120);
+    XcdeFpsTarget t144=xcde_fps_target(144), t165=xcde_fps_target(165), t0=xcde_fps_target(0);
+    assert(t30.interval==-1 && t30.period_scale==0.0f);
+    assert(t60.interval==1 && t60.period_scale==0.0f);
+    assert(t120.interval==1 && t120.period_scale==0.5f);
+    assert(t144.interval==1 && fabsf(t144.period_scale-60.0f/144.0f)<1e-6f);
+    assert(t165.interval==1 && fabsf(t165.period_scale-60.0f/165.0f)<1e-6f);
+    assert(t0.interval==1 && t0.period_scale==0.02f);
     assert(xcde_timestamp_delta(250,3,8)==9);
     assert(xcde_timestamp_delta(2,9,64)==7);
     assert(!xcde_timestamp_delta(2,9,0));

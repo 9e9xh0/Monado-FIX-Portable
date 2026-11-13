@@ -5,7 +5,7 @@
 // game image (device.c calls menu_render inside that rendering). Events arrive on the main thread and are queued for
 // the render thread, which owns the ImGui context; while the menu is open the game sees no keyboard / mouse / pad
 // input. Options that the renderer reads every frame apply at once (resolution, upscaler and its quality, SMAA, depth
-// of field, volume, FPS in the title, V-Sync); the others are saved to xcde.ini and apply at the next start
+// of field, volume, FPS target, FPS in the title, V-Sync); the others are saved to xcde.ini and apply at the next start
 // (marked "al reiniciar"). "Guardar" writes xcde.ini (settings_save) for the launcher and the next start.
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -182,7 +182,7 @@ static const char *const k_en[][2] = {
     {"Antialiasing y desenfoque de movimiento del juego (al reiniciar)", "The game's anti-aliasing and motion blur (after a restart)"},
     {"Antialiasing temporal (TAA) del juego (al reiniciar)", "The game's temporal anti-aliasing (TAA) (after a restart)"},
     {"Mostrar FPS en la barra de título", "Show FPS in the title bar"}, {"Velocidad", "Speed"}, {"30 (como en Switch)", "30 (like Switch)"},
-    {"Sin límite", "Unlímited"}, {"FPS (al reiniciar)", "FPS (after a restart)"}, {"V-Sync (con 30 / 60 FPS)", "V-Sync (at 30 / 60 FPS)"},
+    {"Sin límite", "Unlímited"}, {"V-Sync (con 30 / 60 FPS)", "V-Sync (at 30 / 60 FPS)"},
     {"Volumen", "Volume"}, {"Audio de los vídeos (al reiniciar)", "Video sound (after a restart)"}, {"Controles", "Controls"},
     {"La asignación de teclas y botones se cambia en el launcher (Play Monado.bat), pestaña Controles.",
      "Keys and buttons are remapped in the launcher, Controls tab."},

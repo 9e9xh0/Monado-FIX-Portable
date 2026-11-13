@@ -19,6 +19,7 @@
 #include "../settings.h"
 #include "../kernel.h"
 #include "../frame_clock.h"
+#include "../render_policy.h"
 
 // [XCDE] T249: one sample per guest frame, independent of presentation/FG and selected FPS.
 static XcdeFrameClock xcde_clock;
@@ -68,8 +69,16 @@ uint32_t rt_frame_steps(uint32_t interval) {
 static uint64_t lim_last, lim_iv[8];
 static int lim_n, lim_turns_since_sleep = -1;
 uint64_t g_limiter_slept_ns;  // (stats)
+// A new target invalidates the intervals learned for the old one.
+static void limiter_reset_learning(void) {
+    memset(lim_iv, 0, sizeof lim_iv);
+    lim_last = 0;
+    lim_n = 0;
+    lim_turns_since_sleep = -1;
+}
 
-// [XCDE] frame rate option (launcher "FPS": xcde.ini fps = 30 | 60 | 120 | 144 | ... | unlimited). The game's limiter
+// [XCDE] frame rate option (launcher / F1 menu "FPS": xcde.ini fps = 30 | 60 | 120 | 144 | ... | unlimited; the F1
+// menu applies it live). The game's limiter
 // (f_70005bcfe0) waits until the frame took interval x display period (1/60 s) x the constant at 0x70009d3dcc (0.997),
 // where interval is the int behind the pointer at 0x7000b92ea0 (2 = its 30 fps; 0 reads as 2). 60 fps = interval 1;
 // above, interval 1 and the constant scaled by 60 / target (unlimited: x 0.02). The world, the in-game clock and
@@ -113,46 +122,82 @@ bool xcde_cutscene_30(void) { return g_cut30; }
 int xcde_present_fps(void) { return g_cut30 ? 30 : g_settings.fps; }
 
 static void fps_interval_force(void) {
-    static int want = -2;
-    static float scale = -1;
+    static int applied_fps = -1;
+    static int want = -1;
+    static float scale;
+    static bool interval_saved, restore_interval;
+    static uint32_t original_interval;
+    static bool period_saved;
+    static float original_period;
     static uint64_t after, after_frames, frames;
-    if (want == -2) {
-        int fps = g_settings.fps;
-        const char *e = ENV("XCDE_FPS_INTERVAL");
-        want = e ? atoi(e) : fps == 30 ? -1 : 1;
-        e = ENV("XCDE_FPS_PERIOD_SCALE");
-        scale = e ? (float)atof(e) : fps == 0 ? 0.02f : fps > 60 ? 60.0f / (float)fps : 0;
-        e = ENV("XCDE_FPS_AFTER_S"); after = xcde_frame_now_ns() + (e ? (uint64_t)(atof(e) * 1e9) : 0);
+    static bool timing_loaded;
+
+    if (!timing_loaded) {
+        timing_loaded = true;
+        const char *e = ENV("XCDE_FPS_AFTER_S"); after = xcde_frame_now_ns() + (e ? (uint64_t)(atof(e) * 1e9) : 0);
         e = ENV("XCDE_FPS_AFTER_FRAMES"); after_frames = e ? strtoull(e, NULL, 10) : 0;
     }
     frames++;
-    g_cut30 = g_settings.cutscene_mode && !ENV("XCDE_FPS_INTERVAL") && xcde_in_cutscene();
-    if (want < 0 || xcde_frame_now_ns() < after || frames < after_frames) return;
+
+    // Read the setting again whenever it changes: the F1 menu applies a new target without a restart. Starting at 30
+    // still leaves the game's own interval alone; switching down from a forced target restores it once.
+    int fps = g_settings.fps;
+    if (fps != applied_fps) {
+        XcdeFpsTarget target = xcde_fps_target(fps);
+        const char *e = ENV("XCDE_FPS_INTERVAL");
+        want = e ? atoi(e) : target.interval;
+        e = ENV("XCDE_FPS_PERIOD_SCALE");
+        scale = e ? (float)atof(e) : target.period_scale;
+        applied_fps = fps;
+        restore_interval = want < 0;
+        limiter_reset_learning();
+    }
+
+    bool cut30 = g_settings.cutscene_mode && !ENV("XCDE_FPS_INTERVAL") && xcde_in_cutscene();
+    if (cut30 != g_cut30) {
+        g_cut30 = cut30;
+        if (want >= 0) limiter_reset_learning();
+    }
+    if (xcde_frame_now_ns() < after || frames < after_frames) return;
+
     uint32_t *p = (uint32_t *)(uintptr_t)*(volatile uint64_t *)(uintptr_t)0x7000b92ea0ull;
     if (!p) return;
+    if (!interval_saved) { original_interval = *p; interval_saved = true; }
+
+    volatile float *k = (volatile float *)(uintptr_t)0x70009d3dccull;
+    if (scale > 0 && !period_saved) {
+        period_saved = true;
+        original_period = *k;
+        plat_protect((uint64_t)(uintptr_t)k & ~0xFFFull, 0x1000, PLAT_PROT_RW);
+    }
+    if (period_saved) {  // restore the original constant for 30 / 60 after a higher forced target
+        float desired = original_period * (g_cut30 || scale <= 0 ? 1.0f : scale);
+        if (*k != desired) { *k = desired; LOG("[fps] limiter period %g (interval %d)\n", (double)*k, want); }
+    }
+
+    if (want < 0) {
+        if (restore_interval) {
+            restore_interval = false;
+            if (*p != original_interval) {
+                LOG("[fps] frame interval %u -> %u (the game's own 30 fps)\n", *p, original_interval);
+                *p = original_interval;
+            }
+        }
+        return;
+    }
+
     // T249: use the original period at 30 Hz, rather than rounding 2/scale to an integer
     // (144 Hz used interval 5, yielding 34.72 ms and a different cinematic speed).
-    int target_interval = g_cut30 || want < 0 ? 2 : want;
-    static int logged;
-    if (!logged && *p != (uint32_t)want) { logged = 1; LOG("[fps] frame interval %u -> %d\n", *p, want); }
+    int target_interval = g_cut30 ? 2 : want;
     {   // XCDE_FPS_LOG=1: how often the game set its interval back since the last frame (per 120 frames)
         static int lg = -1, reset;
         static uint64_t n;
         if (lg < 0) lg = ENV("XCDE_FPS_LOG") != NULL;
-        if (lg) { reset += *p != (uint32_t)want; if (++n % 120 == 0) { LOG("[fps] frame %llu: interval set back %d of 120 frames\n", (unsigned long long)n, reset); reset = 0; } }
+        if (lg) { reset += *p != (uint32_t)target_interval; if (++n % 120 == 0) { LOG("[fps] frame %llu: interval set back %d of 120 frames\n", (unsigned long long)n, reset); reset = 0; } }
     }
-    *p = (uint32_t)target_interval;
-    if (scale > 0) {
-        volatile float *k = (volatile float *)(uintptr_t)0x70009d3dccull;
-        static int done;
-        static float original;
-        if (!done) {
-            done = 1;
-            original = *k;
-            plat_protect((uint64_t)(uintptr_t)k & ~0xFFFull, 0x1000, PLAT_PROT_RW);
-        }
-        float desired = original * (g_cut30 ? 1.0f : scale);
-        if (*k != desired) { *k = desired; LOG("[fps] limiter period %g (interval %d)\n", (double)*k, target_interval); }
+    if (*p != (uint32_t)target_interval) {
+        LOG("[fps] frame interval %u -> %d\n", *p, target_interval);
+        *p = (uint32_t)target_interval;
     }
 }
 

@@ -54,7 +54,7 @@ typedef struct {
     bool fps_overlay;     // T258: on-screen native-FPS / frame-time display
     bool upscaler_auto;   // T257: DLSS SR when the SDK confirms support, otherwise FSR 1
     int vulkan_api;       // T256: 0 automatic, 12/13/14 requested backend route (restart)
-    int fps;  // [XCDE] frame rate target: 30 (the game's own), 60, 120, 144..., 0 = unlimited (runtime/hle/framepace.c)
+    int fps;  // [XCDE] frame rate target: 30 (the game's own), 60, 120, 144..., 0 = unlimited (runtime/hle/framepace.c; live)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen

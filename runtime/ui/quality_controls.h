@@ -19,12 +19,12 @@ static inline bool monado_quality_controls(Settings *s, bool en) {
     }
     if (target==3) {
         int rate=s->fps==144 ? 1 : s->fps==165 ? 2 : 0;
-        if (monado_combo(en ? "Advanced FPS (restart)" : "FPS avanzados (reiniciar)",&rate,"120\0 144\0 165\0")) {
+        if (monado_combo(en ? "Advanced FPS" : "FPS avanzados",&rate,"120\0 144\0 165\0")) {
             const int rates[]={120,144,165}; s->fps=rates[rate];
         }
     }
-    ImGui::TextWrapped("%s",en ? "Targets depend on hardware. Frame rate changes require restarting the game." :
-                       "El objetivo depende del equipo. Cambiar los FPS requiere reiniciar el juego.");
+    ImGui::TextWrapped("%s",en ? "Targets depend on hardware. The in-game menu (F1) applies changes immediately; the launcher applies them on the next start." :
+                       "El objetivo depende del equipo. El menú del juego (F1) aplica los cambios al momento; el launcher, al siguiente inicio.");
     if (s->res_mode==RES_DYNAMIC && s->dynamic_max_height)
         ImGui::Text(en ? "Internal range: %d-%dp (capped by output)" : "Rango interno: %d-%dp (limitado por la salida)",s->dynamic_min_height,s->dynamic_max_height);
     if (s->res_mode==RES_DYNAMIC && ImGui::CollapsingHeader(en ? "Dynamic resolution limits" : "Límites de resolución dinamica")) {

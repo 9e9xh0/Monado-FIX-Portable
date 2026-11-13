@@ -176,21 +176,25 @@ NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
         // integrated GPUs (vertices read in place) and with XCDE_FRAME_LAG=0. Only above 60 fps (FPS option above 60
         // or unlimited): the frame shown is then one frame older than the input it answers; at 30 / 60 a frame fits
         // the period without the overlap on the PCs that have the vertex cache, and the extra frame only felt laggy.
-        static int lag = -1;
-        if (lag < 0) {
-            extern int vk_vcache_state(void);
-            const char *e = getenv("XCDE_FRAME_LAG");
-            int vc = vk_vcache_state();
-            bool high = g_settings.fps == 0 || g_settings.fps > 60 || getenv("XCDE_FPS_PERIOD_SCALE");
-            if (e) lag = atoi(e) != 0 && backend_async();
-            else if (vc >= 0) lag = vc == 1 && backend_async() && high;
-            if (lag >= 0) LOG("[nvn] frame lag %s\n", lag ? "on (one frame in flight)" : "off");
-            // [XCDE] T-FRAME-LAG: tell the vertex cache to stage its refreshes through host memory (exec.c vc_flush):
-            // with the GPU a frame behind it must not read guest pages the game has already rewritten.
-            if (lag > 0) { extern void vk_set_frame_lag(bool on); vk_set_frame_lag(true); }
+        extern int vk_vcache_state(void);
+        extern void vk_set_frame_lag(bool on);
+        static int forced = -2, lag = -1;
+        static uint64_t prev;
+        if (forced == -2) { const char *e = getenv("XCDE_FRAME_LAG"); forced = e ? atoi(e) != 0 : -1; }
+        int vc = vk_vcache_state();
+        bool high = g_settings.fps == 0 || g_settings.fps > 60 || getenv("XCDE_FPS_PERIOD_SCALE");
+        int wanted = forced >= 0 ? forced && backend_async() : vc >= 0 ? vc == 1 && backend_async() && high : -1;
+        if (wanted != lag) {  // initial decision, or the F1 menu changed the FPS target
+            lag = wanted;
+            if (lag >= 0) {
+                LOG("[nvn] frame lag %s\n", lag ? "on (one frame in flight)" : "off");
+                // [XCDE] T-FRAME-LAG: tell the vertex cache to stage its refreshes through host memory (exec.c vc_flush):
+                // with the GPU a frame behind it must not read guest pages the game has already rewritten.
+                vk_set_frame_lag(lag > 0);
+                prev = 0;
+            }
         }
         if (lag > 0 && c->x[30] == 0x70005bd038ull) {
-            static uint64_t prev;
             uint64_t cur = sync_of(A(0))->seq;
             renderer_wait_seq(prev);
             prev = cur;

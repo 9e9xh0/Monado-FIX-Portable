@@ -705,6 +705,12 @@ void vk_pipeline_cache_save(void) {
 
 // ================================================================== swapchain
 static bool g_vsync_fifo;  // FIFO chosen by the V-Sync option (backend_present's repeat presents)
+// Shared by present_mode and vk_frame_begin: a live FPS change across 60 Hz needs a swapchain in the new present mode.
+static bool vsync_fifo_wanted(void) {
+    const char *e = getenv("LARECOMP_VK_PRESENT");
+    return !e && g_settings.vsync && g_settings.fps > 0 && g_settings.fps <= 60 && !getenv("XCDE_FPS_PERIOD_SCALE") &&
+           (!getenv("LARECOMP_HIDDEN") || getenv("XCDE_VSYNC_TEST")) && !diag_deterministic();  // (test runs: as before)
+}
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -715,8 +721,7 @@ static VkPresentModeKHR present_mode(void) {
     // 59.99x Hz monitor some frames were shown twice and others never, at a steady "60 fps" in the counters (the user:
     // feels laggy, frametime flat). FIFO shows each frame once. Above 60 / unlimited: mailbox (FIFO would cap it).
     const char *e = getenv("LARECOMP_VK_PRESENT");
-    bool vs = !e && g_settings.vsync && g_settings.fps > 0 && g_settings.fps <= 60 && !getenv("XCDE_FPS_PERIOD_SCALE") &&
-              (!getenv("LARECOMP_HIDDEN") || getenv("XCDE_VSYNC_TEST")) && !diag_deterministic();  // (test runs: as before)
+    bool vs = vsync_fifo_wanted();
     if (vs) e = "fifo";
     { static int logged; if (!logged++) LOG("[vk] present mode %s%s\n", e ? e : "mailbox", vs ? " (V-Sync option)" : ""); }
     VkPresentModeKHR want = !e || !strcmp(e, "mailbox") ? VK_PRESENT_MODE_MAILBOX_KHR
@@ -872,6 +877,7 @@ static volatile bool sc_dirty;  // [XCDE] the F1 menu changed V-Sync: a new swap
 void vk_request_swapchain_recreate(void) { sc_dirty = true; }
 bool vk_frame_begin(const float clear[4]) {
     cur_frame.ok = false;
+    if (g_vk.swapchain && vsync_fifo_wanted() != g_vsync_fifo) sc_dirty = true;  // FPS target changed across 60
     if (sc_dirty && g_vk.swapchain) { sc_dirty = false; recreate_swapchain(); }
     int w, h;
     SDL_GetWindowSizeInPixels(window, &w, &h);
