@@ -1531,12 +1531,12 @@ static void tab_graphics() {
                           "y reconstruyen la imagen de la ventana con varios frames: más FPS y bordes sin dientes.\n"
                           "Sustituyen al antialiasing temporal del juego. DLSS necesita una GPU NVIDIA RTX; si no\n"
                           "está disponible se usa FSR 3.1."));
-    if (g.upscaler == 1 || g.upscaler == 2) {  // [XCDE] RCAS strength (FSR 1 / FSR 3), also live in F1
+    if (g.upscaler == 1 || g.upscaler == 2 || g.upscaler == 4) {  // [XCDE] RCAS strength (FSR 1 / FSR 3 / FSR 4 Lite), also live in F1
         float sharp = g.sharpness >= 0.0f ? g.sharpness : g.upscaler == 1 ? 0.9f : 0.3f;
         ImGui::SetNextItemWidth(320 * g_scale);
         if (ImGui::SliderFloat(g.ui_lang ? "Sharpening (RCAS)" : "Nitidez (RCAS)", &sharp, 0.0f, 1.0f, "%.2f")) g.sharpness = sharp;
-        ImGui::SetItemTooltip("%s", g.ui_lang ? "0 = off, 1 = maximum. Default: FSR 1 0.90, FSR 3 0.30 (as before)."
-                                              : "0 = desactivada, 1 = máxima. Predeterminada: FSR 1 0,90, FSR 3 0,30 (como antes).");
+        ImGui::SetItemTooltip("%s", g.ui_lang ? "0 = off, 1 = maximum. Default: FSR 1 0.90, FSR 3 / FSR 4 Lite 0.30 (as before)."
+                                              : "0 = desactivada, 1 = máxima. Predeterminada: FSR 1 0,90, FSR 3 / FSR 4 Lite 0,30 (como antes).");
         if (g.sharpness >= 0.0f) {
             ImGui::SameLine();
             if (ImGui::SmallButton(g.ui_lang ? "Default" : "Predeterminada")) g.sharpness = -1.0f;

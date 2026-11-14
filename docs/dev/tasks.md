@@ -1350,3 +1350,18 @@ Ver `docs/VULKAN_DLSS_FPS.md` para opciones, fuente oficial, hashes, resultado d
 - T261: implementados tema grafito/verde, bordes redondeados, navegación lateral, controles compartidos/responsivos y reducción de trabajo de UI. Aceptación: launcher enlazado y capturas nativas a 720p/1080p y 200 % DPI; navegación manual con mando y F1 en escenas jugables pendientes.
 
 Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026-11-04.md`. No marcar compatibilidad de una familia a partir de una sola GPU.
+
+
+## Issue #96 — fog-boundary sliver (2026-11-14)
+
+- [ ] T262 **#96 (1/2): FSR 4 Lite ran RCAS sharpening unconditionally.** `temporal.c` handed the FSR 4 Lite frame a
+  hardcoded `.sharpness = 0.3`, while the FSR 3 dispatch uses `xcde_sharpness(&g_settings)` with `enableSharpening =
+  sharpness > 0`. So RCAS ran even at 1:1 - where that layer only reconstructs the sample grid - and neither
+  `upscale_sharpness` in xcde.ini nor the launcher reached it (the slider was gated to upscalers 1 and 2; FSR 4 Lite is
+  4). Now it reads the setting like FSR 3 (0 = off, per `fsr4_api.h`) and the slider + tooltip cover it. The reporter of
+  #96 runs `fsr4lite` + quality `native`, i.e. exactly this path, and a 3x3 sharpener overshooting at a soft high-contrast
+  edge draws a light / dark line along it.
+  Done when: the reporter's spot shows no sliver with `upscale_sharpness = 0` (and the default 0.30 is confirmed not to be
+  the cause if it does not clear), and a 720p / 4K capture of the same spot otherwise differs only at the run-to-run noise
+  band. Not run here: `generated/` and the dump are absent - compilation only. The #96 jitter candidate is T263, separate
+  PR, so this can merge and be bisected without a build.

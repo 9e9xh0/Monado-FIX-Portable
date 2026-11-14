@@ -721,7 +721,11 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
     float jit_out[2];  // what the upscalers are told (the draws keep the raw jitter; XCDE_TMP_JIT_SIGN)
     jit_upscale_out(jitter, jit_out);
     if (g_settings.upscaler == UPSCALE_FSR4_LITE) {  // [XCDE] T-FSR4-LITE (fsr4.c: the optional native component)
-        MonadoFsr4Frame f = {.cmd = cb, .reset = reset, .ultra = g_settings.upscale_quality == UQ_ULTRA, .sharpness = 0.3f};
+        // [XCDE] #96: sharpness was a hardcoded 0.3 - RCAS always on (also at 1:1, where the layer is only reconstructing
+        // the sample grid), and neither the launcher's slider nor `upscale_sharpness` in xcde.ini reached it. RCAS at a fog
+        // boundary overshoots by a pixel: a light / dark line along it. Now the same value the FSR 3 dispatch uses (0 = off).
+        MonadoFsr4Frame f = {.cmd = cb, .reset = reset, .ultra = g_settings.upscale_quality == UQ_ULTRA,
+                             .sharpness = xcde_sharpness(&g_settings)};
         f.color = (MonadoFsr4Image){img[0].b.image, img[0].v, rw, rh};
         f.motion = (MonadoFsr4Image){img[1].b.image, img[1].v, rw, rh};
         f.depth = (MonadoFsr4Image){img[2].b.image, img[2].v, rw, rh};
