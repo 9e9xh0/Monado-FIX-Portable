@@ -1380,8 +1380,17 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   sobre la salida (chaleco negro), albedo del G-buffer (t4 cara 190,159,131 correcto), LUT y tonemap global (la
   referencia recorta igual), constantes `cb1`/`cb3` y estructura de luces (atenuación `(1-saturate(d/25))^k` correcta).
   Corrección en `runtime/nvn/vulkan/exec.c` (`char_light_src`, emparejada por el hash del código del programa, como los
-  reemplazos de bloom): escala por 0.35 el color final de ese pase. Con ella la cara queda en (141,112,96) y el pelo en
-  (163,139,98), el frame baja a 1526 px ≥250 (referencia 1312) y el p99 a 209.6 frente a 206.4, sin cambios en las zonas
-  sin personaje. `XCDE_CHAR_LIGHT=<factor>` ajusta el factor (`1` = valores originales).
-  Pendiente: confirmar en escenas diurnas/exteriores que 0.35 sigue siendo correcto (la referencia disponible no incluye
-  personaje) y decidir si se expone en el launcher.
+  reemplazos de bloom): escala el recojo de luz LOCAL de ese pase. Con ella la cara queda en (157,121,99) y el pelo en
+  (157,147,115) —la versión anterior, que escalaba todo el color por 0.35, daba (154,116,95) y (157,147,117): media de
+  |diferencia| 0.5/255 en el frame completo—, el frame baja a 5982 px ≥250 frente a 14242 sin corrección y las zonas sin
+  personaje no cambian. `XCDE_CHAR_LIGHT=<factor>` ajusta el factor (`1` = valores originales).
+  Mundo abierto (misma noche, cañón a plena luz): escalar *todo* el color dejaba al personaje demasiado oscuro (cara
+  R 71 con el juego intacto, R 41 con 0.35). El pase pone a cero `r41/r42/r43` en el prólogo del bucle de luces, acumula
+  una luz puntual por iteración y suma al final la luz direccional del sol (`cb3[13]`, un `fma` por canal, pc invitado
+  1548); después convierte esa suma en el término de Lambert/1π (pc 1518..1598). La corrección escala `r41/r42/r43` al
+  principio de ese epílogo (etiqueta `case 5400`) y deja el sol intacto: a plena luz la suma local es ~0 y la captura
+  sale idéntica byte a byte a la del build sin corrección (mismo md5), mientras que bajo las antorchas del Corredor la
+  suma local es casi todo el color y el resultado es el de antes. El factor pasa de 0.35 a 0.27 porque ya no se atenúa
+  la parte solar. El ancla es la etiqueta `case` a propósito: los comentarios `// pc` solo existen con
+  `LARECOMP_SAVE_MSL`.
+  Pendiente: decidir si se expone en el launcher.

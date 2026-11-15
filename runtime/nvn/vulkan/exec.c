@@ -2187,24 +2187,43 @@ static const char *bloom_tent_src(uint64_t code) {
 // [XCDE] T-CHAR-LIGHT: the character deferred-lighting program (guest fragment program 72c2cb3f00, matched by the
 // content hash of its code like the bloom replacements above) writes its lit colour above the frame's exposure clip
 // point: in the Corridor of Silence (prison island, blue torch) the face/hair saturate to 255 — 11.6k clipped pixels
-// against 1.3k for the whole environment, which matches the reference capture (1.3k) exactly. Its light gather comes
-// out ~2.9x stronger than the same frame's environment budget (albedo 0.52 x irradiance 0.8 next to the torch), so the
-// colour going into the scene is scaled. XCDE_CHAR_LIGHT=<factor> sets the factor, XCDE_CHAR_LIGHT=1 keeps the game's
-// values (default 0.35, chosen to match the reference histogram: whole-frame p99 210 vs 206). The patched source has
-// its own SPIR-V cache identity; the anchor is this program's epilogue, so any other program is untouched.
+// against 1.3k for the whole environment, which matches the reference capture (1.3k) exactly. Its local (point light)
+// gather comes out ~2.9x stronger than the same frame's environment budget (albedo 0.52 x irradiance 0.8 next to the
+// torch), so that term is scaled.
+//
+// T264: only the LOCAL light gather is scaled, never the whole colour — scaling everything also dimmed the sun, and in
+// the open world (daylight, the torches far away) that left the characters too dark (face R 71 -> 41 in the canyon
+// capture). The program zeroes r41/r42/r43 at the light-loop prologue, sums one point light per iteration and adds the
+// directional sun of cb3[13] as the last fma (guest pc 1548); the sum then becomes the Lambert/1-pi term
+// (pc 1518..1598). The patch scales r41/r42/r43 at the head of that epilogue (label `case 5400`), so the sun keeps its
+// value: in daylight the local sum is ~0 and the character renders exactly like the game (the capture is byte-identical
+// to the unpatched build), while under the corridor's torches the local sum is nearly the whole colour, so the image
+// matches the old whole-colour fix (mean |diff| 0.5/255 over the frame; face 157,121,99 vs 154,116,95). The factor went
+// 0.35 -> 0.27 because the sun is no longer dimmed. XCDE_CHAR_LIGHT=<factor> sets the factor, XCDE_CHAR_LIGHT=1 keeps the
+// game's values. The anchor is a `case` label on purpose: the `// pc` comments only exist with LARECOMP_SAVE_MSL. The
+// patched source has its own SPIR-V cache identity; nothing else is touched.
 static const char *char_light_src(uint64_t code, const char *src, char **out_patch) {
     static int init;
-    static float scale = 0.35f;
+    static float scale = 0.27f;
     *out_patch = NULL;
     if (!init) { init = 1; const char *e = getenv("XCDE_CHAR_LIGHT"); if (e) scale = (float)atof(e); }
     if (!code || !(scale > 0.0f) || scale == 1.0f) return src;
     if (hmix(1469598103934665603ull, (const void *)(uintptr_t)(code + 0x30), 0x200) != 0xe4e7bf3a80de7cf3ull) return src;
-    static const char anchor[] = "  c0[0] = as_f(r0);\n  c0[1] = as_f(r1);\n  c0[2] = as_f(r2);\n";
+    static const char anchor[] = "  case 5400u:\n";
     const char *at = strstr(src, anchor);
-    if (!at) return src;
+    if (!at) {
+        static int dumped;
+        if (!__atomic_exchange_n(&dumped, 1, __ATOMIC_RELAXED)) {
+            FILE *df = fopen("build/char_live_fs.glsl", "wb");
+            if (df) { fputs(src, df); fclose(df); }
+            LOG("[char] local-light anchor not found: source dumped to build/char_live_fs.glsl\n");
+        }
+        return src;
+    }
+    at += sizeof anchor - 1;
     char f[32], ins[160];
     snprintf(f, sizeof f, "%.6g", (double)scale);
-    snprintf(ins, sizeof ins, "  r0 = as_u(as_f(r0) * %sf);\n  r1 = as_u(as_f(r1) * %sf);\n  r2 = as_u(as_f(r2) * %sf);\n", f, f, f);
+    snprintf(ins, sizeof ins, "    r41 = as_u(as_f(r41) * %sf);\n    r42 = as_u(as_f(r42) * %sf);\n    r43 = as_u(as_f(r43) * %sf);\n", f, f, f);
     size_t head = (size_t)(at - src), n = strlen(src), k = strlen(ins);
     char *buf = malloc(n + k + 1);
     if (!buf) return src;
@@ -2212,7 +2231,7 @@ static const char *char_light_src(uint64_t code, const char *src, char **out_pat
     memcpy(buf + head, ins, k);
     memcpy(buf + head + k, at, n - head + 1);
     static int reported;
-    if (!__atomic_exchange_n(&reported, 1, __ATOMIC_RELAXED)) LOG("[char] character lighting scaled by %s\n", f);
+    if (!__atomic_exchange_n(&reported, 1, __ATOMIC_RELAXED)) LOG("[char] character local light scaled by %s\n", f);
     *out_patch = buf;
     return buf;
 }
