@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import game_id  # noqa: E402
 
 HEADERS = ('cpu.h', 'simd.h', 'simd_fp.h', 'gamelib.h')
-GAMES = ('profile.json', 'patches.py', 'hle_symbols.txt')
+GAMES = ('profile.json', 'hle_symbols.txt')
 # Everything the zig frontend needs to compile and link C for one platform. The rest of
 # the bundled toolchain (other targets, C++ standard library, debugger) is dropped:
 # `zig cc` is all the guest code ever uses.
@@ -121,6 +121,8 @@ def stage(dest, platform, zig=None, link_files=()):
         shutil.copy2(ROOT / 'runtime' / name, dest / 'include' / name)
     for name in GAMES:
         shutil.copy2(ROOT / 'games/xcde' / name, dest / 'games' / name)
+    for patch in (ROOT / 'games/xcde').glob('patches*.py'):
+        shutil.copy2(patch, dest / 'games' / patch.name)
     shutil.copy2(ROOT / 'tools/gamelib_entry.c', dest / 'entry' / 'gamelib_entry.c')
     compiler = Path(zig) if zig else find_zig()
     # The zig binary finds its lib/ folder beside itself, so bundle both and trim.

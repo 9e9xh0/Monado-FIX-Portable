@@ -139,6 +139,13 @@ static Service *new_am_storage(const void *data, uint64_t size) {
 
 extern const uint8_t g_user_id[16];
 
+// GetDisplayVersion: the update the loaded main NSO belongs to (games/xcde/profile.json versions).
+static const char *display_version(void) {
+    const char *id = loader_main_build_id();
+    if (id && !strncmp(id, "92c78bb3dcbbc3f7", 16)) return "1.1.2";
+    return "2.0.0";
+}
+
 static void application_functions(Service *s, IpcReq *req, IpcResp *resp) {
     (void)s;
     switch (req->cmd) {
@@ -162,7 +169,7 @@ static void application_functions(Service *s, IpcReq *req, IpcResp *resp) {
         resp_size(resp, 8);
         break;
     }
-    case 23: memset(resp->data, 0, 0x10); memcpy(resp->data, "2.0.0", 6); resp_size(resp, 0x10); break;  // GetDisplayVersion: the 2.0.0 update (games/xcde/profile.json)
+    case 23: memset(resp->data, 0, 0x10); memcpy(resp->data, display_version(), 6); resp_size(resp, 0x10); break;  // GetDisplayVersion
     case 40: OUT(uint8_t, 0) = 0; resp_size(resp, 1); break;  // NotifyRunning
     case 130: case 140: resp->copy_handles[resp->ncopy++] = new_event(); break;
     default: UNHANDLED("IApplicationFunctions");

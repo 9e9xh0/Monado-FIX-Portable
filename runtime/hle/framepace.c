@@ -11,6 +11,7 @@
 //   LARECOMP_FRAME_STEPS_MAX maximum steps per frame (default 4: after a long stall the game doesn't jump ahead)
 //   LARECOMP_FORCE_STEPS=<n> (test) always n
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -70,22 +71,118 @@ static int lim_n, lim_turns_since_sleep = -1;
 uint64_t g_limiter_slept_ns;  // (stats)
 
 // [XCDE] frame rate option (launcher "FPS": xcde.ini fps = 30 | 60 | 120 | 144 | ... | unlimited). The game's limiter
-// (f_70005bcfe0) waits until the frame took interval x display period (1/60 s) x the constant at 0x70009d3dcc (0.997),
-// where interval is the int behind the pointer at 0x7000b92ea0 (2 = its 30 fps; 0 reads as 2). 60 fps = interval 1;
-// above, interval 1 and the constant scaled by 60 / target (unlimited: x 0.02). The world, the in-game clock and
-// cutscenes advance by the time that passed (deterministic runs at 60 and 120 with the route time-scaled: same clock and
-// positions at equal times). Tests: XCDE_FPS_INTERVAL=<n>, XCDE_FPS_PERIOD_SCALE=<f>, XCDE_FPS_AFTER_S / _FRAMES.
-// (A display / driver vsync or an overlay's frame limit, e.g. RivaTuner's, still caps the rate.)
+// (2.0.0 f_70005bcfe0, 1.1.2 ml::DevGraphNx::renderSyncSys at 0x693c90) waits until the frame took interval x display
+// period (1/60 s) x a 0.997 constant, where interval is the int behind a pointer (2 = its 30 fps; 0 reads as 2).
+// 60 fps = interval 1; above, interval 1 and the constant scaled by 60 / target (unlimited: x 0.02). The world, the
+// in-game clock and cutscenes advance by the time that passed (deterministic runs at 60 and 120 with the route
+// time-scaled: same clock and positions at equal times). Tests: XCDE_FPS_INTERVAL=<n>, XCDE_FPS_PERIOD_SCALE=<f>,
+// XCDE_FPS_AFTER_S / _FRAMES. (A display / driver vsync or an overlay's frame limit, e.g. RivaTuner's, still caps it.)
+// [XCDE] The limiter interval/period, the layout clock and the cutscene state are mapped for both versions (the
+// cutscene state through game::GameController::isEventViewer's flag on 1.1.2).
+static bool layout_2_0_0(void) {
+    const char *id = loader_main_build_id();
+    return id && !strncmp(id, "7e1df8e08d60544b", 16);  // (the loader keeps the full NSO build id)
+}
+
+static bool layout_1_1_2(void) {
+    const char *id = loader_main_build_id();
+    return id && !strncmp(id, "92c78bb3dcbbc3f7", 16);
+}
+
+// The limiter's frame interval: a pointer to the int the game keeps at 2 (30 fps). The 1.1.2 pointer lives in
+// ml::DevGraphNx::renderSyncSys's data (relocation at main+0x13efcd0 -> 0x13bfda0).
+static uint64_t limiter_interval_storage(void) {
+    if (layout_2_0_0()) return 0x7000b92ea0ull;
+    if (layout_1_1_2()) return 0x70013efcd0ull;
+    return 0;
+}
+
+// The 0.997 period constant the limiter multiplies the interval by (2.0.0 main+0x9d3dcc, 1.1.2 main+0x119df3c).
+static uint64_t limiter_period_address(void) {
+    if (layout_2_0_0()) return 0x70009d3dccull;
+    if (layout_1_1_2()) return 0x700119df3cull;
+    return 0;
+}
+
+// The layout (UI) library's clock object. It keeps the authored rate at +0x6c (30) and the seconds advanced by
+// each update at +0x70. 2.0.0 stores the object pointer in a global; 1.1.2 goes through PtrSingleton's
+// storage -> s_instance -> LayerManager.
+static uint64_t layout_clock_object(void) {
+    if (layout_2_0_0()) return *(volatile uint64_t *)(uintptr_t)0x7000ba1240ull;
+    if (layout_1_1_2()) {
+        uint64_t slot = *(volatile uint64_t *)(uintptr_t)0x70013e5530ull;
+        return slot ? *(volatile uint64_t *)(uintptr_t)slot : 0;
+    }
+    return 0;
+}
+
 // [XCDE] T224: is a cutscene playing? Global state compared across field / menu / battle and two cutscenes (Dickson's,
 // Vangarre's; build/snap_*.bin): the cinematic camera's block at 0x7000b70628 holds 10 instead of 60 (with
 // its neighbours: 120 -> 10, floats 20 -> 0.5, 10 -> 5.5), and 0x70012d47b4 is 0 instead of 0x72 - both, only while
 // a cutscene runs. Changes are logged.
+// 1.1.2: an in-engine cutscene runs through game::EvtPlayCamera / game::EventCamera; their per-frame update marks
+// the cutscene (patch T224). The title screen runs its own event (vs00title0) through the same camera class, so its
+// event name is excluded. game::RtmEvtManager::s_global + 0xfa38 holds the current event name.
+#define EVENT_MANAGER 0x7001408980ull
+static bool guest_ptr(uint64_t p) { return p >= 0x7000000000ull && p <= 0x7320000000ull && !(p & 7); }
+
+static _Atomic uint64_t event_camera_ns;
+void xcde_note_event_camera(void) {
+    atomic_store_explicit(&event_camera_ns, xcde_frame_now_ns(), memory_order_release);
+}
+
+static void read_event_name(uint64_t m, char *name, int cap) {
+    name[0] = 0;
+    if (!guest_ptr(m)) return;
+    int k = 0;
+    for (; k < cap - 1; k++) {
+        char ch = *(volatile char *)(uintptr_t)(m + 0xfa38 + k);
+        name[k] = ch >= 0x20 && ch < 0x7f ? ch : 0;
+        if (!name[k]) break;
+    }
+    name[k] = 0;
+}
+
+static bool cutscene_state(void) {
+    if (layout_2_0_0()) {
+        // (the camera block alone dropped out for shots with a field-like camera inside a cutscene: 0x70012b9410 - 0x7203 in
+        // field / menu / battle, 0x7003 for the whole Dickson scene - and 0x70012d47b4 hold through them)
+        uint32_t mode = *(volatile uint32_t *)(uintptr_t)0x70012b9410ull;
+        return *(volatile uint32_t *)(uintptr_t)0x70012d47b4ull == 0 && mode != 0 && !(mode & 0x200);
+    }
+    if (layout_1_1_2()) {
+        uint64_t t = atomic_load_explicit(&event_camera_ns, memory_order_acquire);
+        if (!t) return false;
+        uint64_t now = xcde_frame_now_ns();
+        if (now < t || now - t >= 200000000ull) return false;  // (an event camera updated in the last 200 ms)
+        // The title screen runs its own event (vs00title0) through the same camera; it is not a cutscene.
+        char name[65];
+        read_event_name(*(volatile uint64_t *)(uintptr_t)0x7001408980ull, name, (int)sizeof name);
+        return name[0] && strncmp(name, "vs00title", 9);
+    }
+    return false;
+}
+
 bool xcde_in_cutscene(void) {
-    // (the camera block alone dropped out for shots with a field-like camera inside a cutscene: 0x70012b9410 - 0x7203 in
-    // field / menu / battle, 0x7003 for the whole Dickson scene - and 0x70012d47b4 hold through them)
-    uint32_t mode = *(volatile uint32_t *)(uintptr_t)0x70012b9410ull;
-    bool now = *(volatile uint32_t *)(uintptr_t)0x70012d47b4ull == 0 && mode != 0 && !(mode & 0x200);
-    // (one-frame flickers of 0x70012b9410 inside a scene: a change counts after 4 frames in a row; called once a frame)
+    bool now = cutscene_state();
+    if (ENV("XCDE_CUTSCENE_TRACE")) {
+        static int last_raw = -1;
+        if (now != last_raw) {
+            last_raw = now;
+            char name[65];
+            name[0] = 0;
+            uint64_t m = *(volatile uint64_t *)(uintptr_t)0x7001408980ull;
+            if (layout_1_1_2() && guest_ptr(m))
+                for (int k = 0; k < 64; k++) {
+                    char ch = *(volatile char *)(uintptr_t)(m + 0xfa38 + k);
+                    name[k] = ch >= 0x20 && ch < 0x7f ? ch : 0;
+                    if (!name[k]) break;
+                }
+            name[64] = 0;
+            LOG("[cutscene] raw %d name '%s'\n", now, name);
+        }
+    }
+    // (one-frame flickers of the state inside a scene: a change counts after 4 frames in a row; called once a frame)
     static bool in;
     static int streak;
     streak = now != in ? streak + 1 : 0;
@@ -93,12 +190,15 @@ bool xcde_in_cutscene(void) {
     static int last = -1;
     if (in != last) {
         extern uint64_t renderer_present_count(void);
-        #define XW(a) (*(volatile uint32_t *)(uintptr_t)(a##ull))
-        if (last >= 0)
+        if (last >= 0 && layout_2_0_0()) {
+            #define XW(a) (*(volatile uint32_t *)(uintptr_t)(a##ull))
             LOG("[cutscene] %s (frame %llu) | b70628 %x b70650 %x b706a0 %x b706f0 %x 12b9410 %x 12d47b4 %x 12d47bc %x\n", in ? "start" : "end",
                 (unsigned long long)renderer_present_count(), XW(0x7000b70628), XW(0x7000b70650), XW(0x7000b706a0), XW(0x7000b706f0),
                 XW(0x70012b9410), XW(0x70012d47b4), XW(0x70012d47bc));
-        #undef XW
+            #undef XW
+        } else if (last >= 0) {
+            LOG("[cutscene] %s (frame %llu)\n", in ? "start" : "end", (unsigned long long)renderer_present_count());
+        }
         last = in;
     }
     return in;
@@ -113,6 +213,8 @@ bool xcde_cutscene_30(void) { return g_cut30; }
 int xcde_present_fps(void) { return g_cut30 ? 30 : g_settings.fps; }
 
 static void fps_interval_force(void) {
+    uint64_t interval_storage = limiter_interval_storage();
+    if (!interval_storage) return;  // (an unsupported revision: leave the game's own limiter alone)
     static int want = -2;
     static float scale = -1;
     static uint64_t after, after_frames, frames;
@@ -128,11 +230,18 @@ static void fps_interval_force(void) {
     frames++;
     g_cut30 = g_settings.cutscene_mode && !ENV("XCDE_FPS_INTERVAL") && xcde_in_cutscene();
     if (want < 0 || xcde_frame_now_ns() < after || frames < after_frames) return;
-    uint32_t *p = (uint32_t *)(uintptr_t)*(volatile uint64_t *)(uintptr_t)0x7000b92ea0ull;
+    uint32_t *p = (uint32_t *)(uintptr_t)*(volatile uint64_t *)(uintptr_t)interval_storage;
     if (!p) return;
     // T249: use the original period at 30 Hz, rather than rounding 2/scale to an integer
     // (144 Hz used interval 5, yielding 34.72 ms and a different cinematic speed).
     int target_interval = g_cut30 || want < 0 ? 2 : want;
+    if (ENV("XCDE_CUTSCENE_TRACE")) {
+        static int last_target = -1;
+        if (target_interval != last_target) {
+            last_target = target_interval;
+            LOG("[cutscene] limiter interval %d\n", target_interval);
+        }
+    }
     static int logged;
     if (!logged && *p != (uint32_t)want) { logged = 1; LOG("[fps] frame interval %u -> %d\n", *p, want); }
     {   // XCDE_FPS_LOG=1: how often the game set its interval back since the last frame (per 120 frames)
@@ -143,7 +252,7 @@ static void fps_interval_force(void) {
     }
     *p = (uint32_t)target_interval;
     if (scale > 0) {
-        volatile float *k = (volatile float *)(uintptr_t)0x70009d3dccull;
+        volatile float *k = (volatile float *)(uintptr_t)limiter_period_address();
         static int done;
         static float original;
         if (!done) {
@@ -685,10 +794,15 @@ static void menu_clock_update(void) {
     double dt = previous && now > previous ? (double)(now - previous) * 1e-9 : 0;
     previous = now;
     if (!(dt > 0 && dt <= 0.25)) dt = 1.0 / 30.0;
-    uint64_t ui = *(volatile uint64_t *)(uintptr_t)0x7000ba1240ull;
+    uint64_t ui = layout_clock_object();
     if (ui < 0x7000000000ull || ui > 0x731fffff00ull || (ui & 7)) return;
     volatile float *rate = (volatile float *)(uintptr_t)(ui + 0x6c);
     if (*rate != 30.0f) return;  // wait for the layout singleton's initialization
+    if (ENV("XCDE_MENU_TIMING_LOG")) {
+        static int logged;
+        if (!logged) { logged = 1; LOG("[menu] clock %llx rate %g step %g\n", (unsigned long long)ui,
+                                     (double)*rate, (double)*(volatile float *)(uintptr_t)(ui + 0x70)); }
+    }
     *(volatile float *)(uintptr_t)(ui + 0x70) = (float)dt;
 }
 

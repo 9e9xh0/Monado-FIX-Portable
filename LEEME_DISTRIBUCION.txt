@@ -15,7 +15,7 @@ USO
 3. Ejecuta Build Monado.bat. La preparacion instala MSYS2, sus librerias,
    Python y los paquetes de compilacion; necesita Internet y varios GB libres.
    Cuando lo solicite, elige la carpeta con exefs y romfs de tu propia copia
-   compatible de Xenoblade Chronicles: Definitive Edition 2.0.0.
+   compatible de Xenoblade Chronicles: Definitive Edition 2.0.0 o 1.1.2.
    Tambien puedes prepararlos en targets/exefs y targets/romfs antes de empezar.
    Esos archivos los debe aportar cada usuario; no vienen en este ZIP.
 4. Opcional, despues de preparar Python: .venv\Scripts\python.exe tools\install_dlss.py

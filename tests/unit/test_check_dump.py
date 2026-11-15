@@ -138,5 +138,66 @@ class TestRejections(Base):
         self.assertNotIn('abababab', '\n'.join(r.messages))
 
 
+class TestMultipleVersions(unittest.TestCase):
+    """A profile with a `versions` list (the 2.0.0 default plus 1.1.2)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        self.ids200 = {'rtld': 'aa' * 8, 'main': 'bb' * 8, 'sdk': 'cc' * 8, 'subsdk0': 'dd' * 8}
+        self.ids112 = dict(self.ids200, main='ee' * 8)
+        self.files200 = {'a/one.bin': 10, 'b/two.bin': 20}
+        self.files112 = {'a/one.bin': 10, 'b/two.bin': 21, 'c/three.bin': 5}
+        exefs200, romfs200 = make_dump(os.path.join(self.root, 'v200'), self.ids200, self.files200)
+        exefs112, romfs112 = make_dump(os.path.join(self.root, 'v112'), self.ids112, self.files112)
+        self.exefs200, self.romfs200 = exefs200, romfs200
+        self.exefs112, self.romfs112 = exefs112, romfs112
+        required = ['main', 'main.npdm', 'rtld', 'sdk', 'subsdk0']
+        self.profile = {
+            'version': '2.0.0',
+            'modules': [{'name': n, 'build_id': b} for n, b in self.ids200.items()],
+            'exefs_required': required,
+            'romfs_manifest': build_manifest(romfs200),
+            'patches': 'patches.py',
+            'versions': [{
+                'version': '1.1.2',
+                'modules': [{'name': n, 'build_id': b} for n, b in self.ids112.items()],
+                'exefs_required': required,
+                'romfs_manifest': build_manifest(romfs112),
+                'patches': 'patches-1.1.2.py',
+            }],
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_accepts_default_version(self):
+        r = cd.check_dump(os.path.dirname(self.exefs200), self.profile)
+        self.assertTrue(r.ok, r.messages)
+        self.assertEqual(r.version, '2.0.0')
+
+    def test_accepts_additional_version_and_reports_it(self):
+        r = cd.check_dump(os.path.dirname(self.exefs112), self.profile)
+        self.assertTrue(r.ok, r.messages)
+        self.assertEqual(r.version, '1.1.2')
+        self.assertEqual(r.version_entry['patches'], 'patches-1.1.2.py')
+        self.assertEqual(cd.detect_version(self.profile, self.exefs112)['version'], '1.1.2')
+
+    def test_version_selects_its_own_romfs(self):
+        r = cd.check_dump(None, self.profile, exefs=self.exefs112, romfs=self.romfs200)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, cd.ERR_ROMFS)
+        self.assertIn('1.1.2', '\n'.join(r.messages))
+
+    def test_unknown_build_id_lists_both_versions(self):
+        make_nso(os.path.join(self.exefs112, 'main'), 'ff' * 8)
+        r = cd.check_dump(os.path.dirname(self.exefs112), self.profile)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, cd.ERR_VERSION)
+        text = '\n'.join(r.messages)
+        self.assertIn('2.0.0', text)
+        self.assertIn('1.1.2', text)
+
+
 if __name__ == '__main__':
     unittest.main()

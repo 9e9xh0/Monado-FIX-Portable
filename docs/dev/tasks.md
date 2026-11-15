@@ -1394,3 +1394,32 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   la parte solar. El ancla es la etiqueta `case` a propósito: los comentarios `// pc` solo existen con
   `LARECOMP_SAVE_MSL`.
   Pendiente: decidir si se expone en el launcher.
+
+## 1.1.2 port (2026-11-15)
+
+Supported versions stay automatic: the profile's `versions[]` entry detects `main` build `92c78bb3dcbbc3f7` and uses
+`games/xcde/patches-1.1.2.py`; 2.0.0 (`7e1df8e08d60544b`) keeps `patches.py`. No 2.0.0 address is reused on 1.1.2.
+
+Ported and verified in game (save load + New Game, `XCDE_*_TRACE=1`):
+
+- Frame limiter (`ml::DevGraphNx::renderSyncSys`), graphics live overrides (`ml::DrPixlPostParm`), menu hold/repeat
+  timers (`T-MENU-INPUT`), follower walk thresholds (`T210`), scene aspect (`T265`), shadow maps 2048
+  (`T-SHADOW-MAPS`), grass visibility radius (`T-FOLIAGE-DISTANCE`).
+- `T-FOLIAGE-DISTANCE` shading: the MPF material far fade in `ml::DrMdoSetup` now follows the chosen range
+  (`[foliage-shading] near=2 far=20 -> 32.6` at `grass_lod = high`).
+- `T-PROP-LOD`: the decoded instanced-map prop buffer and its stream-record size in
+  `ml::DrMdoCtlSeamInstMap::initInstMapParts` (the same 64-byte record and x22 buffer as 2.0.0); logs
+  `[prop-lod] 7 intermediate thresholds adjusted`.
+- `T224` cutscene detection: `game::EventCamera` / `game::EvtPlayCamera` updates mark a real in-engine cutscene;
+  the title's `vs00title0` event and save loads are excluded. Verified: field `raw 0`, Sword Valley `raw 1
+  name 'vs01000000'`, limiter interval 2.
+- `T236` direct mouse camera: `game::PlayerCamera` (vtable `0x7001388f70`, yaw +0x1f0 / pitch +0x1f8, same fields as
+  2.0.0) is scanned per version; its per-frame update gates writing so menus/loading/cutscenes keep the stick path.
+  Verified with injected motions: 40/-20/100/-100 px -> -0.1/+0.05/-0.25/+0.25 rad.
+
+Still 2.0.0-only (not ported; different class layout on 1.1.2):
+
+- Party switch + arts palette/party HUD helpers, follower footstep repeat guard, map-jump tour/debug, save-list
+  thumbnail fix, live/streaming foliage refresh and the 3x MPF pool.
+- `game::PartyManager` on 1.1.2 has no set-leader / field-group API matching 2.0.0; the leader-change path is the
+  Party menu's own unnamed chain and needs fresh reverse engineering (docs/party_switch_research.md is 2.0.0).

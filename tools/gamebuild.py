@@ -166,12 +166,13 @@ def validate(dump, resources):
     result = check_dump.check_dump(str(dump), load_profile(resources))
     if not result.ok:
         raise SystemExit(f'gamebuild: {dump}: ' + '; '.join(result.messages))
+    return result
 
 
-def generate_modules(dump, resources, out, jobs, log):
-    """Lift every module the profile marks `lift` into <out>/generated/<module>/*.c."""
-    profile = load_profile(resources)
-    modules = [m for m in profile['modules'] if m.get('lift')]
+def generate_modules(dump, resources, entry, out, jobs, log):
+    """Lift every module the version entry marks `lift` into <out>/generated/<module>/*.c."""
+    modules = [m for m in entry['modules'] if m.get('lift')]
+    patches = resources / 'games' / entry.get('patches', 'patches.py')
     generated = out / 'generated'
     generated.mkdir(parents=True, exist_ok=True)
     for index, module in enumerate(modules):
@@ -179,7 +180,8 @@ def generate_modules(dump, resources, out, jobs, log):
         argv = [module['name'], str(dump / 'exefs' / module['name']), str(module['base']),
                 str(generated / module['name']),
                 '--simd', 'c',
-                '--patches', str(resources / 'games/patches.py'),
+                '--patches', str(patches),
+                '--game-version', entry['version'],
                 '--hle', str(resources / 'games/hle_symbols.txt')]
         log.write(f'\n=== generate {module["name"]} ===\n')
         log.flush()
@@ -319,9 +321,11 @@ def main(argv=None):
                 return 0
         except (OSError, ValueError):
             pass
-    validate(dump, resources)
+    result = validate(dump, resources)
+    entry = result.version_entry
     if args.dry_run:
-        print(f'gamebuild: would build {library} from {dump} with {resources / link["compiler"]}')
+        print(f'gamebuild: would build {library} from {dump} (version {entry["version"]}) with '
+              f'{resources / link["compiler"]}')
         return 0
     started = time.time()
     out.mkdir(parents=True, exist_ok=True)
@@ -332,7 +336,7 @@ def main(argv=None):
         log.flush()
         describe_compiler(resources, out, link, log)
         note(log, 'generate: start')
-        modules = generate_modules(dump, resources, out, jobs, log)
+        modules = generate_modules(dump, resources, entry, out, jobs, log)
         note(log, f'generate: done; compile: start ({jobs} at a time)')
         units = compile_units(resources, out, link, jobs, log)
         note(log, 'compile: done; link: start')

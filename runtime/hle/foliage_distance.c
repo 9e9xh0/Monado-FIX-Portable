@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* The render-thread UI publishes a request; only the serial guest foliage pass
  * commits it. A whole pass uses one scale, including selection and materials. */
@@ -46,7 +47,11 @@ void xcde_foliage_begin(void) {
 bool xcde_foliage_refreshing(void) { return refresh_pass; }
 
 float xcde_foliage_shading_distance(float near_r, float far_r) {
-    float detail_scale = grass_lod_shading_scale(active_scale);
+    // 1.1.2 has no pass-boundary hook: use the published request, as its radius sites do.
+    extern const char *loader_main_build_id(void);
+    float scale = !strncmp(loader_main_build_id(), "92c78bb3dcbbc3f7", 16)
+        ? xcde_foliage_requested_scale() : active_scale;
+    float detail_scale = grass_lod_shading_scale(scale);
     float result = xcde_foliage_far_scaled(near_r, far_r, detail_scale);
     static int trace = -1, printed;
     if (trace < 0) trace = getenv("XCDE_GRASS_TRACE") != NULL;
@@ -85,7 +90,10 @@ void xcde_foliage_refresh_selection(Cpu *c) {
 /* Called before CPU selection and uniform upload; never changes game assets
  * or accumulates a multiplier in the material records. */
 float xcde_foliage_distance(float near_r, float far_r) {
-    float scale = active_scale;
+    // 1.1.2 has no pass-boundary hook yet, so use the published request directly for its radius sites.
+    extern const char *loader_main_build_id(void);
+    float scale = !strncmp(loader_main_build_id(), "92c78bb3dcbbc3f7", 16)
+        ? xcde_foliage_requested_scale() : active_scale;
     static int trace, printed_radius, printed_fade, printed_fixed;
     static bool traced;
     if (!traced) { trace = getenv("XCDE_GRASS_TRACE") != NULL; traced = true; }

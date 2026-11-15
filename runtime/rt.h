@@ -39,6 +39,7 @@ typedef struct Module {
 
 extern Module g_modules[4];
 extern int g_nmodules;
+const char *loader_main_build_id(void);  // (the loaded targets/exefs/main NSO revision)
 void loader_load(const char *exefs_dir);  // (again after a reboot: modules are reloaded into wiped memory)
 uint64_t loader_find_symbol(const char *name);
 const char *loader_symbol_at(uint64_t addr, uint64_t *offset);

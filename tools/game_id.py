@@ -18,6 +18,7 @@ SOURCES = (
     'tools/gamelib_entry.c',
     'games/xcde/profile.json',
     'games/xcde/patches.py',
+    'games/xcde/patches-1.1.2.py',
     'games/xcde/hle_symbols.txt',
     'runtime/cpu.h',
     'runtime/simd.h',
@@ -40,6 +41,7 @@ def sources():
     """Every input of the fingerprint, sorted, as paths relative to the repository root."""
     files = {name for name in SOURCES if (ROOT / name).is_file()}
     files.update(p.relative_to(ROOT).as_posix() for p in (ROOT / 'tools/lifter').glob('*.py'))
+    files.update(p.relative_to(ROOT).as_posix() for p in (ROOT / 'games/xcde').glob('patches*.py'))
     files.add('tools/game_id.py')
     return sorted(files)
 

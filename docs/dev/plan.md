@@ -19,7 +19,7 @@
 
 ## 1. Summary
 
-A static recompilation of Xenoblade Chronicles: Definitive Edition 2.0.0 (Switch) to a native PC executable. The
+A static recompilation of Xenoblade Chronicles: Definitive Edition 2.0.0 / 1.1.2 (Switch) to a native PC executable. The
 AArch64 code of `main` and `sdk` is translated to C by LASRecomp's generator (which already decodes 100 % of the
 game's instructions), compiled with clang and linked with a runtime derived from LASRecomp that simulates the Horizon
 kernel and services and implements NVN on Vulkan. The multimedia library (`subsdk0`) is replaced by host
@@ -142,7 +142,7 @@ concrete tasks are in `tasks.md`.
 
 | Milestone | Goal | Exit gate | Requirements |
 |---|---|---|---|
-| **M0 Foundations** | Repo, licences, dump check, basic CI | `check_dump.py` accepts 2.0.0 and refuses the rest; the packager refuses a derived file; CI green without game data | FR-001–007, NFR-001, SC-012 |
+| **M0 Foundations** | Repo, licences, dump check, basic CI | `check_dump.py` accepts 2.0.0 and 1.1.2 and refuses the rest; the packager refuses a derived file; CI green without game data | FR-001–007, NFR-001, SC-012 |
 | **M1 Profile and generator** | Game profile, adapted generator, main+sdk generated | Reproducible `generated/` (the same hash twice); 0 `Unsupported`; coverage report | FR-010, FR-013, NFR-006 |
 | **M2 A correct, compact lifter** | Jump tables (R4), atomics, wider differential, first full build | ≥ 95 % tables resolved; differential 100 %; the game compiles; build time measured | FR-011, NFR-005 |
 | **M3 Boot** | XCDE loader, SVCs and services in strict mode, base diagnostics (watchdog, minidump, determinism) | The game reaches its first `Present` without unaudited stubs; Q2/Q4/Q5 answered | FR-020–024, FR-060–065 |

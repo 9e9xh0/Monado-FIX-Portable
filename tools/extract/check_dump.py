@@ -22,12 +22,57 @@ class Result:
         self.ok = True
         self.code = ERR_OK
         self.messages = []
+        self.version = None       # the supported version the dump matched
+        self.version_entry = None  # its entry in the game profile
 
     def fail(self, code, *msgs):
         self.ok = False
         self.code = code
         self.messages.extend(msgs)
         return self
+
+
+def versions(profile):
+    """The supported versions: the top-level profile first, then its `versions` list.
+
+    A profile without `versions` is one version (the old layout); a profile with it keeps
+    the top-level fields as the default version, so readers that predate the list still work.
+    """
+    out = [profile]
+    out.extend(profile.get('versions', []))
+    return out
+
+
+def version_entry(profile, name=None):
+    """Select one version entry (default: the profile's `default_version` or top level)."""
+    if name is None:
+        name = profile.get('default_version') or profile.get('version') or versions(profile)[0]['version']
+    for entry in versions(profile):
+        if entry['version'] == name:
+            return entry
+    raise KeyError(f'version {name!r} is not in the game profile')
+
+
+def _matches(entry, ids):
+    return all(ids.get(m['name']) == m['build_id'][:16] for m in entry['modules'])
+
+
+def detect_version(profile, exefs):
+    """The supported version entry whose module build-ids match `exefs`, or None."""
+    ids = {m['name']: _read_build_id(os.path.join(exefs, m['name'])) for m in profile['modules']}
+    for entry in versions(profile):
+        if _matches(entry, ids):
+            return entry
+    return None
+
+
+def _expected_versions(profile):
+    parts = []
+    for entry in versions(profile):
+        main = next((m for m in entry['modules'] if m['name'] == 'main'), None)
+        parts.append(f'{entry["version"]} (main build-id {main["build_id"][:16]})' if main
+                     else entry['version'])
+    return ', '.join(parts)
 
 
 def _containers_in(path):
@@ -83,23 +128,33 @@ def check_dump(path, profile, exefs=None, romfs=None):
             return r.fail(ERR_EXEFS, f'exefs/{m["name"]} is not a valid NSO.')
         ids[m['name']] = bid
 
-    # version by build id
-    bad = [(m['name'], ids[m['name']], m['build_id'][:16]) for m in profile['modules']
-           if ids[m['name']] != m['build_id'][:16]]
-    if bad:
-        lines = [f'Unsupported version: {profile["version"]} is expected.']
-        lines += [f'  {n}: build-id found {f}, expected {e}' for n, f, e in bad]
+    # version by build id (each supported version names all modules it applies to)
+    matches = [entry for entry in versions(profile) if _matches(entry, ids)]
+    if not matches:
+        lines = [f'Unsupported version: supported are {_expected_versions(profile)}.']
+        ref = versions(profile)[0]
+        lines += [f'  {m["name"]}: build-id found {ids.get(m["name"])}, expected {m["build_id"][:16]}'
+                  for m in ref['modules'] if ids.get(m['name']) != m['build_id'][:16]]
         return r.fail(ERR_VERSION, *lines)
+    entry = matches[0]
 
-    # romfs: aggregate manifest
+    # romfs: aggregate manifest (the build ids already picked the version; with several exefs
+    # matches the romfs decides between them)
     if not romfs or not os.path.isdir(romfs):
         return r.fail(ERR_ROMFS, 'The romfs folder is missing.')
-    exp = profile['romfs_manifest']
     got = build_manifest(romfs)
+    if len(matches) > 1:
+        for candidate in matches:
+            if got['sha256'] == candidate.get('romfs_manifest', profile['romfs_manifest'])['sha256']:
+                entry = candidate
+                break
+    r.version = entry['version']
+    r.version_entry = entry
+    exp = entry.get('romfs_manifest', profile['romfs_manifest'])
     if got['sha256'] == exp['sha256']:
-        r.messages.append(f'OK: version {profile["version"]}, {got["files"]} files in romfs.')
+        r.messages.append(f'OK: version {entry["version"]}, {got["files"]} files in romfs.')
         return r
-    msgs = ['The romfs does not match the expected version.']
+    msgs = [f'The romfs does not match version {entry["version"]}.']
     for name, (n, b) in exp['dirs'].items():
         g = got['dirs'].get(name)
         if g is None:

@@ -91,5 +91,103 @@
   "bytes": 14608774103,
   "sha256": "4000306053de5c81dd1847874335ecd3ba6b7deb840bd927d5665bf2fccf1cbf"
  },
- "heap_max": "0xD0000000"
+ "heap_max": "0xD0000000",
+ "default_version": "2.0.0",
+ "patches": "patches.py",
+ "versions": [
+  {
+   "version": "1.1.2",
+   "version_code": 196608,
+   "modules": [
+    {
+     "name": "rtld",
+     "base": null,
+     "lift": false,
+     "build_id": "31a2773ea6928ffe"
+    },
+    {
+     "name": "main",
+     "base": "0x7000000000",
+     "lift": true,
+     "build_id": "92c78bb3dcbbc3f7"
+    },
+    {
+     "name": "subsdk0",
+     "base": "0x7002000000",
+     "lift": false,
+     "build_id": "5a7ada8dd7447c10"
+    },
+    {
+     "name": "sdk",
+     "base": "0x7004000000",
+     "lift": true,
+     "build_id": "ad3fdfbd62a5f4b0"
+    }
+   ],
+   "exefs_required": [
+    "main",
+    "main.npdm",
+    "rtld",
+    "sdk",
+    "subsdk0"
+   ],
+   "romfs_manifest": {
+    "dirs": {
+     "bdat": [
+      627,
+      63921112
+     ],
+     "chr": [
+      7785,
+      4425383012
+     ],
+     "config": [
+      4,
+      641
+     ],
+     "cs": [
+      432,
+      1814990979
+     ],
+     "eff": [
+      2798,
+      370869437
+     ],
+     "map": [
+      172,
+      3770053184
+     ],
+     "menu": [
+      5612,
+      938339683
+     ],
+     "monolib": [
+      66,
+      20079882
+     ],
+     "movie": [
+      14,
+      257434420
+     ],
+     "param": [
+      12,
+      699824
+     ],
+     "script": [
+      976,
+      38138095
+     ],
+     "sound": [
+      41,
+      2912896182
+     ]
+    },
+    "files": 18539,
+    "bytes": 14612806451,
+    "sha256": "ab6f008e132d624f359c3bd0e7a77ffe11ef51fd234f33026173d33191a14dab"
+   },
+   "heap_max": "0xD0000000",
+   "patches": "patches-1.1.2.py"
+  }
+ ]
 }

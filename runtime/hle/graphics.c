@@ -81,6 +81,7 @@ uint32_t xcde_shadow_map_size(void) {
         unsigned wanted=choice==1 || choice==2 ? 2048u : 1024u, empty=0;
         atomic_compare_exchange_strong_explicit(&shadow_size,&empty,wanted,memory_order_release,memory_order_acquire);
         size=atomic_load_explicit(&shadow_size,memory_order_acquire);
+        if(ENV("XCDE_GRAPHICS_TRACE")) LOG("[shadow-maps] %u px\n",size);
     }
     return size;
 }

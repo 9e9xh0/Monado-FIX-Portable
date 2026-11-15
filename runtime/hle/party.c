@@ -64,9 +64,31 @@ void party_switch_request(int step) {
 // [XCDE] T240: the map jump manager's holder (f_7000542870 reads +0x58 from it; found by its vtable with
 // LARECOMP_FNPROF_BT=7000542870 while a save loads)
 #define WARP_VTABLE 0x7000b654a0ull
+// [XCDE] T236 on 1.1.2: game::PlayerCamera (same class, other image): its constructor clears yaw at +0x1f0 / +0x1f4
+// and pitch at +0x1f8 / +0x1fc, the same fields as 2.0.0. It is the only object mapped for 1.1.2 so far; the party,
+// arts and warp classes above are still 2.0.0 addresses (kept off, see party_game_tick).
+#define CAMERA_VTABLE_1_1_2 0x7001388f70ull  // (_ZTVN4game12PlayerCameraE 0x7001388f60 + 0x10: the object's vptr)
 
 enum { K_FIELD, K_HUD, K_PLAYER, K_GAUGE, K_PAL, K_CAM, K_WARP, K_N };
-static const uint64_t k_vtables[K_N] = {FIELD_VTABLE, HUD_VTABLE, PLAYER_VTABLE, GAUGE_VTABLE, PALETTE_VTABLE, CAMERA_VTABLE, WARP_VTABLE};
+static const uint64_t k_vtables_2_0_0[K_N] = {FIELD_VTABLE, HUD_VTABLE, PLAYER_VTABLE, GAUGE_VTABLE, PALETTE_VTABLE, CAMERA_VTABLE, WARP_VTABLE};
+static const uint64_t k_vtables_1_1_2[K_N] = {[K_CAM] = CAMERA_VTABLE_1_1_2};
+
+// Which revision's object layout: the vtables (and every offset below) differ between builds.
+enum { REV_UNKNOWN, REV_1_1_2, REV_2_0_0 };
+static int game_rev(void) {
+    static _Atomic int rev = -1;
+    int r = atomic_load_explicit(&rev, memory_order_relaxed);
+    if (r < 0) {
+        const char *id = loader_main_build_id();
+        r = id && !strncmp(id, "92c78bb3dcbbc3f7", 16) ? REV_1_1_2
+          : id && !strncmp(id, "7e1df8e08d60544b", 16) ? REV_2_0_0 : REV_UNKNOWN;
+        atomic_store_explicit(&rev, r, memory_order_relaxed);
+    }
+    return r;
+}
+static const uint64_t *game_vtables(void) {
+    return game_rev() == REV_1_1_2 ? k_vtables_1_1_2 : k_vtables_2_0_0;
+}
 #define SET_MAX 32
 typedef struct { uint64_t obj[K_N][SET_MAX]; int n[K_N]; } Found;
 
@@ -88,10 +110,14 @@ static void found_read_unlock(void) { pthread_rwlock_unlock(&g_found_lock); }
 static void found_write_unlock(void) { pthread_rwlock_unlock(&g_found_lock); }
 #endif
 
-static bool obj_ok(uint64_t o, int k) { return o && *(volatile uint64_t *)(uintptr_t)o == k_vtables[k]; }
+static bool obj_ok(uint64_t o, int k) {
+    const uint64_t *vt = game_vtables();
+    return o && vt[k] && *(volatile uint64_t *)(uintptr_t)o == vt[k];
+}
 
 static void heap_scan(Found *f) {
     memset(f, 0, sizeof *f);
+    const uint64_t *vt = game_vtables();
 #ifdef _WIN32
     for (uint64_t a = HEAP_BASE; a < HEAP_BASE + HEAP_MAX;) {
         MEMORY_BASIC_INFORMATION mi;
@@ -102,7 +128,7 @@ static void heap_scan(Found *f) {
                 uint64_t v = *p;
                 if ((v >> 32) != 0x70) continue;  // (every vtable is in the game's image at 0x70_0000_0000)
                 for (int k = 0; k < K_N; k++)
-                    if (v == k_vtables[k] && f->n[k] < SET_MAX) f->obj[k][f->n[k]++] = (uint64_t)(uintptr_t)p;
+                    if (vt[k] && v == vt[k] && f->n[k] < SET_MAX) f->obj[k][f->n[k]++] = (uint64_t)(uintptr_t)p;
             }
         a = end;
     }
@@ -118,7 +144,7 @@ static void heap_scan(Found *f) {
                 uint64_t v = words[j];
                 if ((v >> 32) != 0x70) continue;
                 for (int k = 0; k < K_N; k++)
-                    if (v == k_vtables[k] && f->n[k] < SET_MAX) f->obj[k][f->n[k]++] = (uint64_t)(uintptr_t)&words[j];
+                    if (vt[k] && v == vt[k] && f->n[k] < SET_MAX) f->obj[k][f->n[k]++] = (uint64_t)(uintptr_t)&words[j];
             }
         }
     }
@@ -128,15 +154,23 @@ static void heap_scan(Found *f) {
 
 // Everything still there? (a scanned object freed or reused, a battle's gauges not created yet)
 static bool found_stale(const Found *f) {
+    const uint64_t *vt = game_vtables();
     for (int k = 0; k < K_N; k++)
         for (int i = 0; i < f->n[k]; i++)
-            if (!obj_ok(f->obj[k][i], k)) return true;
-    for (int k = 0; k < K_GAUGE; k++) if (!f->n[k]) return true;
+            if (vt[k] && !obj_ok(f->obj[k][i], k)) return true;
+    for (int k = 0; k < K_GAUGE; k++) if (vt[k] && !f->n[k]) return true;
     if (g_cam_used && !f->n[K_CAM]) return true;
     if (g_warp_used && !f->n[K_WARP]) return true;
     if (f->n[K_GAUGE] && !f->n[K_PAL]) return true;  // (a battle without its palette)
-    uint64_t hud = f->obj[K_HUD][0];
+    uint64_t hud = vt[K_HUD] ? f->obj[K_HUD][0] : 0;
     return hud && *(volatile uint64_t *)(uintptr_t)(hud + 0x2c0) && !f->n[K_GAUGE];  // (a battle without its gauges)
+}
+
+// Anything at all from this build's mapped classes? (title / loading screens have none)
+static bool found_any(const Found *f) {
+    const uint64_t *vt = game_vtables();
+    for (int k = 0; k < K_N; k++) if (vt[k] && f->n[k]) return true;
+    return false;
 }
 
 #ifdef _WIN32
@@ -161,8 +195,8 @@ static void *party_scanner(void *arg)
             found_write_lock();
             g_found = scan;
             found_write_unlock();
-            // (at most one scan a second; every 4 s while there's no party yet: title screen, loading)
-            plat_sleep_until_ns(plat_now_ns() + (scan.n[K_FIELD] ? 1000000000ull : 4000000000ull));
+            // (at most one scan a second; every 4 s while nothing of this build's is loaded yet: title screen, loading)
+            plat_sleep_until_ns(plat_now_ns() + (found_any(&scan) ? 1000000000ull : 4000000000ull));
         } else {
             plat_sleep_until_ns(plat_now_ns() + 250000000ull);
         }
@@ -177,6 +211,7 @@ static void found_get(Found *f) {
     found_read_unlock();
 }
 static uint64_t found_one(const Found *f, int k) {
+    if (!game_vtables()[k]) return 0;
     for (int i = 0; i < f->n[k]; i++) if (obj_ok(f->obj[k][i], k)) return f->obj[k][i];
     g_rescan = 1;
     return 0;
@@ -449,16 +484,53 @@ static void art_macro(uint64_t frame) {
 // at mouse_sens 50), no stick in between: no dead zone, curve or top speed. The game's thread, each pad read.
 static volatile uint64_t g_cam_direct_frame;
 bool party_camera_direct(uint64_t frame) { return g_cam_direct_frame && frame - g_cam_direct_frame <= 1; }
+
+// [XCDE] T236 on 1.1.2: there is no 2.0.0 player-control object to ask. game::PlayerCamera::update runs only while the
+// player camera is the active view (the field, battle, menus open and closed - not during cutscenes, which push
+// game::EventCamera); patch T236 records it each frame. Recent update = the player has the camera (input.c's pad read
+// runs between two of its updates).
+static _Atomic uint64_t player_cam_ns;
+void xcde_note_player_camera(void) {
+    extern uint64_t xcde_frame_now_ns(void);
+    atomic_store_explicit(&player_cam_ns, xcde_frame_now_ns(), memory_order_release);
+}
+static bool player_camera_active(void) {
+    extern uint64_t xcde_frame_now_ns(void);
+    uint64_t t = atomic_load_explicit(&player_cam_ns, memory_order_acquire);
+    if (!t) return false;
+    uint64_t now = xcde_frame_now_ns();
+    return now >= t && now - t < 200000000ull;
+}
+
 static void mouse_camera(uint64_t frame) {
     extern bool input_mouse_take(uint64_t frame, float *dx, float *dy), input_mouse_on(void);
     extern int g_mouse_sens;
     extern bool g_mouse_invert;
+    static int trace = -1;  // (tests: XCDE_MOUSE_TRACE=1 logs the gate and each applied motion)
+    if (trace < 0) trace = getenv("XCDE_MOUSE_TRACE") != NULL;
     if (!input_mouse_on()) return;  // (the mouse camera off, or the cursor not captured: no scans for it)
     g_cam_used = true;
     Found f;
     found_get(&f);
     uint64_t cam = found_one(&f, K_CAM);
-    if (!cam || !player_in_control(found_one(&f, K_PLAYER))) return;  // (the stick fallback moves it, if anything)
+    if (!cam) {
+        if (trace) { static int once; if (!once) { once = 1; LOG("[mouse] f%llu rev %d: no camera object yet\n", (unsigned long long)frame, game_rev()); } }
+        return;  // (the stick fallback moves it, if anything)
+    }
+    bool active = game_rev() == REV_1_1_2 ? player_camera_active() : player_in_control(found_one(&f, K_PLAYER));
+    if (trace) {
+        static int once;
+        if (!once) {
+            once = 1;
+            LOG("[mouse] f%llu rev %d cam %llx active %d\n", (unsigned long long)frame, game_rev(),
+                (unsigned long long)cam, (int)active);
+        }
+    }
+    if (!active) return;
+    if (game_rev() == REV_1_1_2) {
+        extern bool xcde_in_cutscene(void);
+        if (xcde_in_cutscene()) return;
+    }
     float dx, dy;
     if (!input_mouse_take(frame, &dx, &dy)) return;
     g_cam_direct_frame = frame;
@@ -478,6 +550,8 @@ static void mouse_camera(uint64_t frame) {
     float yaw = v[0] - dx * k, pitch = v[2] + dy * k * (g_mouse_invert ? -1 : 1);
     if (pitch < -0.98f) pitch = -0.98f;
     if (pitch > 1.18f) pitch = 1.18f;
+    if (trace) LOG("[mouse] f%llu cam %llx yaw %.4f -> %.4f pitch %.4f -> %.4f\n", (unsigned long long)frame,
+                   (unsigned long long)cam, v[0], yaw, v[2], pitch);
     v[0] = v[1] = yaw;
     v[2] = v[3] = pitch;
     last_yaw = yaw, last_frame = frame;
@@ -1054,9 +1128,16 @@ static void ent_scan(Cpu *c, uint64_t frame) {
 }
 
 void party_game_tick(Cpu *c, uint64_t frame) {
-    ent_scan(c, frame);
-    debug_fixed(c, frame);
-    debug_tour(c, frame);
+    // The party, arts and warp object layouts below were measured on 2.0.0. 1.1.2 has only the player camera mapped
+    // (the direct mouse camera); the rest of the mod stays off rather than using another build's addresses.
+    int rev = game_rev();
+    if (rev == REV_UNKNOWN) return;
+    bool full = rev == REV_2_0_0;
+    if (full) {
+        ent_scan(c, frame);
+        debug_fixed(c, frame);
+        debug_tour(c, frame);
+    }
     extern bool g_party_switch;
     static uint64_t at[16];
     static int nat = -1;
@@ -1082,23 +1163,28 @@ void party_game_tick(Cpu *c, uint64_t frame) {
         if (!pthread_create(&t, NULL, party_scanner, NULL)) pthread_detach(t);
     }
 #endif
-    for (int i = 0; i < nat; i++) if (at[i] == frame) { at[i] = 0; g_switch_req = 1; }
-    static int probe = -1;  // (tests: XCDE_PARTY_PROBE=<n>: the deployed members' positions every n frames)
-    if (probe < 0) probe = getenv("XCDE_PARTY_PROBE") ? atoi(getenv("XCDE_PARTY_PROBE")) : 0;
-    if (probe && frame % (uint64_t)probe == 0) party_probe(c, frame);
-    static uint64_t art_at[8], art_v[8];  // (tests: XCDE_ART_AT=<frame>:<slot>,...: an arts hotkey pressed then)
-    static int nart = -1;
-    if (nart < 0) {
-        nart = 0;
-        for (const char *p = getenv("XCDE_ART_AT"); p && *p && nart < 8;) {
-            art_at[nart] = strtoull(p, (char **)&p, 10);
-            art_v[nart++] = *p == ':' ? strtoull(p + 1, (char **)&p, 10) : 0;
-            while (*p == ',') p++;
+    if (full) {
+        for (int i = 0; i < nat; i++) if (at[i] == frame) { at[i] = 0; g_switch_req = 1; }
+        static int probe = -1;  // (tests: XCDE_PARTY_PROBE=<n>: the deployed members' positions every n frames)
+        if (probe < 0) probe = getenv("XCDE_PARTY_PROBE") ? atoi(getenv("XCDE_PARTY_PROBE")) : 0;
+        if (probe && frame % (uint64_t)probe == 0) party_probe(c, frame);
+        static uint64_t art_at[8], art_v[8];  // (tests: XCDE_ART_AT=<frame>:<slot>,...: an arts hotkey pressed then)
+        static int nart = -1;
+        if (nart < 0) {
+            nart = 0;
+            for (const char *p = getenv("XCDE_ART_AT"); p && *p && nart < 8;) {
+                art_at[nart] = strtoull(p, (char **)&p, 10);
+                art_v[nart++] = *p == ':' ? strtoull(p + 1, (char **)&p, 10) : 0;
+                while (*p == ',') p++;
+            }
         }
+        for (int i = 0; i < nart; i++) if (art_at[i] == frame) { art_at[i] = 0; party_art_request((int)art_v[i]); }
+        art_macro(frame);
+    } else {
+        g_switch_req = 0, g_art_req = -1;  // (a key press made outside 2.0.0: dropped)
     }
-    for (int i = 0; i < nart; i++) if (art_at[i] == frame) { art_at[i] = 0; party_art_request((int)art_v[i]); }
-    art_macro(frame);
     mouse_camera(frame);
+    if (!full) return;
     int step = g_switch_req;
     if (!step) return;
     g_switch_req = 0;

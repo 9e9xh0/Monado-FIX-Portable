@@ -36,6 +36,13 @@
 #include "../../generated/sdk/sdk_id.h"
 #endif
 
+// The version the generated game code was lifted from (gen.py writes generated/main/main_id.h).
+#ifdef XCDE_GAME_VERSION
+static const char *const k_game_version = XCDE_GAME_VERSION;
+#else
+static const char *const k_game_version = "2.0.0";
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #define GAME_EXE "build/xcde.exe"
@@ -2091,8 +2098,9 @@ int main(int argc, char **argv) {
             SDL_ShowOpenFolderDialog(dump_selected, nullptr, win, NULL, false);
         }
         ImGui::EndDisabled();
-        ImGui::SetItemTooltip("%s", g.ui_lang ? "The folder with exefs/ and romfs/ (version 2.0.0). Remembered as targets/."
-                                              : "La carpeta con exefs/ y romfs/ (versión 2.0.0). Se recuerda como targets/.");
+        ImGui::SetItemTooltip(g.ui_lang ? "The folder with exefs/ and romfs/ (version %s). Remembered as targets/."
+                                        : "La carpeta con exefs/ y romfs/ (versión %s). Se recuerda como targets/.",
+                              k_game_version);
         ImGui::SameLine();
         ImGui::TextUnformatted(have_game ? (g.ui_lang ? "Game files found" : "Archivos del juego encontrados")
                                          : (g.ui_lang ? "Select your game files" : "Elige los archivos del juego"));

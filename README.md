@@ -8,7 +8,8 @@
 **Monado** es una **recompilación estática** de *Xenoblade Chronicles: Definitive Edition* (Nintendo Switch, 2020) diseñada para convertirse en una aplicación nativa de Windows x86-64 con un renderizador Vulkan.
 
 * **No es un emulador:** El código ARM64 original del juego se traduce con antelación (Ahead-of-Time) a C y se compila directamente para tu PC. El sistema operativo de la consola y la API gráfica (NVN) se reimplementan sobre Windows y Vulkan.
-* **Requisitos:** Requiere una copia propia y legal del juego (versión 2.0.0, con el juego base y su actualización aplicados) extraída en carpetas `exefs` y `romfs`. No se incluyen archivos del juego ni formatos empaquetados (`.nsp`, `.xci`, `.nca`).
+* **Requisitos:** Requiere una copia propia y legal del juego (versión 2.0.0 o 1.1.2, con el juego base y su actualización aplicados) extraída en carpetas `exefs` y `romfs`. No se incluyen archivos del juego ni formatos empaquetados (`.nsp`, `.xci`, `.nca`).
+* **Versiones soportadas:** 2.0.0 (predeterminada) y 1.1.2. La compilación detecta la versión por los build-id de tus archivos; cada ejecutable contiene el código de una sola versión.
 
 ### 🚀 Mejoras y Características de Monado-FIX-Portable
 
@@ -30,7 +31,7 @@ Este repositorio (`Monado-FIX-Portable`) toma como base el fork de `vinitaison/M
 
 ### ⚙️ Instrucciones Rápidas de Uso
 
-1. Coloca o vincula tus carpetas `exefs` y `romfs` extraídas (versión 2.0.0) dentro de la estructura de carpetas en `/targets` (o `/targets/Exefs` y `/targets/Romfs`).
+1. Coloca o vincula tus carpetas `exefs` y `romfs` extraídas (versión 2.0.0 o 1.1.2) dentro de la estructura de carpetas en `/targets` (o `/targets/Exefs` y `/targets/Romfs`).
 2. Si utilizas una versión portable o precompilada, solo asegúrate de ubicar tus archivos de juego correspondientes e inicia ejecutando `Play Monado.bat`.
 3. Si prefieres compilar desde cero, ejecuta `Build Monado.bat` para instalar de forma automatizada las dependencias necesarias y compilar el proyecto.
 
@@ -52,7 +53,8 @@ Este repositorio (`Monado-FIX-Portable`) toma como base el fork de `vinitaison/M
 **Monado** is a **static recompilation** of *Xenoblade Chronicles: Definitive Edition* (Nintendo Switch, 2020) into a native Windows x86-64 application powered by a Vulkan renderer.
 
 * **Not an emulator:** The game's native ARM64 code is translated ahead-of-time into C and compiled specifically for your PC. The console's operating system and graphics API (NVN) are reimplemented on top of Windows and Vulkan.
-* **Requirements:** Requires your own legally obtained copy of the game (version 2.0.0, base game with the update applied) extracted into plain `exefs` and `romfs` folders. No game files, `.nsp`, `.xci`, or `.nca` packages are included.
+* **Requirements:** Requires your own legally obtained copy of the game (version 2.0.0 or 1.1.2, base game with the update applied) extracted into plain `exefs` and `romfs` folders. No game files, `.nsp`, `.xci`, or `.nca` packages are included.
+* **Supported versions:** 2.0.0 (default) and 1.1.2. The build detects the version from your files' build-ids; each executable holds one version's code.
 
 ### 🚀 Improvements & Features in Monado-FIX-Portable
 
@@ -74,7 +76,7 @@ This repository (`Monado-FIX-Portable`) builds upon `vinitaison/Monado`'s fork (
 
 ### ⚙️ Quick Setup Instructions
 
-1. Place your legally dumped game `exefs` and `romfs` folders (version 2.0.0) into the `/targets` directory (`targets/Exefs` and `targets/Romfs`).
+1. Place your legally dumped game `exefs` and `romfs` folders (version 2.0.0 or 1.1.2) into the `/targets` directory (`targets/Exefs` and `targets/Romfs`).
 2. If using a portable build, simply drop your game files in place and launch `Play Monado.bat`.
 3. If building from source, run `Build Monado.bat` to automatically download dependencies and build the application.
 

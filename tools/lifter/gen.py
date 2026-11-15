@@ -539,6 +539,7 @@ def main(argv=None):
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--patches')  # [XCDE] games/<id>/patches.py
+    ap.add_argument('--game-version')  # [XCDE] the profile entry's version, for the id headers
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
     args = ap.parse_args(argv)
@@ -671,10 +672,14 @@ def main(argv=None):
         f.write("// emitted by gen.py: the NSO build id this module's code was lifted from (compared at load\n"
                 "// time by runtime/loader.c: the game files of another game version are refused)\n")
         f.write(f'const char nso_buildid_{args.name}[] = "{m.nso.build_id}";\n')
+        if args.game_version and args.name == 'main':
+            f.write(f'const char nso_game_version[] = "{args.game_version}";\n')
         write_if_changed(os.path.join(args.outdir, f'{args.name}_id.c'), f.getvalue())
     with io.StringIO() as f:
         f.write('// emitted by gen.py: keep in sync with the *_id.c next to this (NSO build-id check)\n')
         f.write(f'#define XCDE_GAME_{args.name.upper()}_ID "{m.nso.build_id}"\n')
+        if args.game_version and args.name == 'main':
+            f.write(f'#define XCDE_GAME_VERSION "{args.game_version}"\n')
         write_if_changed(os.path.join(args.outdir, f'{args.name}_id.h'), f.getvalue())
     print(f'{args.name}: wrote {nchunks} chunks, {time.time() - t0:.0f}s total', file=sys.stderr, flush=True)
 

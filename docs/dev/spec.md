@@ -22,16 +22,16 @@ installing tools by hand.
 
 **Why this priority:** without it nothing exists; it is also the project's legal boundary.
 
-**Independent test:** with a 2.0.0 dump on a clean machine the builder finishes and leaves a game that boots; with a
-wrong dump, the message explains the problem.
+**Independent test:** with a 2.0.0 or 1.1.2 dump on a clean machine the builder finishes and leaves a game that
+boots; with a wrong dump, the message explains the problem.
 
 **Acceptance scenarios:**
-1. **Given** a folder with the 2.0.0 `exefs/` and `romfs/`, **when** the user presses *Build*, **then** the process
-   finishes without errors, shows step-by-step progress and the launcher moves to *Play*.
+1. **Given** a folder with the 2.0.0 or 1.1.2 `exefs/` and `romfs/`, **when** the user presses *Build*, **then** the
+   process finishes without errors, shows step-by-step progress and the launcher moves to *Play*.
 2. **Given** an `.nsp`, `.xci`, `.nca` or `.nsz`, **when** it is selected, **then** it is refused, explaining that
    extracted content is needed, without reading the file.
-3. **Given** an exefs of another version, **when** it is validated, **then** the detected and expected (2.0.0)
-   versions are shown.
+3. **Given** an exefs of another version, **when** it is validated, **then** the detected and supported (2.0.0,
+   1.1.2) versions are shown.
 4. **Given** an incomplete romfs, **when** it is validated, **then** the folders with missing (or differently sized)
    files are named before building. (The manifest is aggregated per folder + a hash, so the game's file list is not
    published: Art. I.)
@@ -142,7 +142,8 @@ The developer can record and replay input, compare builds frame by frame, profil
 **Input and build**
 - **FR-001**: The system MUST accept a folder with extracted `exefs/` and `romfs/`, or their contents.
 - **FR-002**: The system MUST refuse encrypted containers (`.nsp`, `.xci`, `.nca`, `.nsz`, `.xcz`) without reading them.
-- **FR-003**: The system MUST verify version 2.0.0 by the modules' build-id (`main` `7e1df8e08d60544b…`).
+- **FR-003**: The system MUST verify a supported version by the modules' build-id: 2.0.0 (`main`
+  `7e1df8e08d60544b…`, default) or 1.1.2 (`main` `92c78bb3dcbbc3f7…`).
 - **FR-004**: The system MUST verify the romfs is complete (expected counts and sizes per folder and a hash of the list
   of paths and sizes).
 - **FR-005**: The build MUST be resumable step by step and keep a log per step.
@@ -238,7 +239,8 @@ laptop with an iGPU (Radeon 780M or Intel Xe), **C** Steam Deck (Linux).
 - **SC-012**: Zero game-derived files in the repository and in published packages (checked in CI).
 
 ## 4. Assumptions
-- The supported version is **2.0.0** (update `v262144`); other versions are new work.
+- The supported versions are **2.0.0** (update `v262144`, default) and **1.1.2** (update `v196608`); other
+  versions are new work. Each build still contains one version's code.
 - The player owns a legal copy and extracts it themselves; the project doesn't explain how.
 - System fonts are replaced by free fonts unless the user provides theirs.
 

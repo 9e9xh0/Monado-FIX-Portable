@@ -16,10 +16,10 @@ GIT: https://git-scm.com/install/windows
 
 Seleccionar y instalar: Standalone Installer Git for Windows/x64 Setup.
 
-NO SE UTILIZA LOS ARCHIVOS NSP NI NADA DE ESO EN CAMBIO SE UTILIZAN LOS DATOS DE TU JUEGO EXTRAIDO (ya sea de una switch original con tu copia legal del juego con la actualización 2.0.0 aplicada) ESTO SE PUEDE HACER CON RYUJINX YA QUE PERMITE EXTRAER TU COPIA LEGALMENTE.
+NO SE UTILIZA LOS ARCHIVOS NSP NI NADA DE ESO EN CAMBIO SE UTILIZAN LOS DATOS DE TU JUEGO EXTRAIDO (ya sea de una switch original con tu copia legal del juego con la actualización 2.0.0 o 1.1.2 aplicada) ESTO SE PUEDE HACER CON RYUJINX YA QUE PERMITE EXTRAER TU COPIA LEGALMENTE.
 
 NOTA:
-Si descargas la versión portable pon tu Exefs y Romfs en la carpeta /targets recuerden que debe ser de la version 2.0.0.
+Si descargas la versión portable pon tu Exefs y Romfs en la carpeta /targets recuerden que debe ser de la version 2.0.0 o 1.1.2.
 1.- La versión de COMPILAR.zip (necesita COMPILAR) esta tiene todo vacío así que en esta tendrás que descargar las librerías (se descargan solas) y instalar GIT es muy importante sino no iniciara. GIT: https://git-scm.com/install/windows
 
 Pasos:

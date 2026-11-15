@@ -318,7 +318,7 @@ def main():
         # (no targets/ folder in the package itself: tools/package_guard.py refuses one in anything published)
         with open(os.path.join(out, 'GAME FILES - READ ME.txt'), 'w', newline='\r\n') as f:
             f.write('Create a folder named targets next to this file and copy the exefs and romfs folders of your own\n'
-                    'Xenoblade Chronicles: Definitive Edition 2.0.0 dump into it, so that targets\\exefs\\main and\n'
+                    'Xenoblade Chronicles: Definitive Edition 2.0.0 or 1.1.2 dump into it, so that targets\\exefs\\main and\n'
                     'targets\\romfs exist. Then start "Play Monado.bat": on first start the launcher builds the game code\n'
                     'from your files (a few minutes, once). No game files or game code are included in this package.\n')
     copy_tree('data', os.path.join(out, 'data'), 'data/')

@@ -262,5 +262,5 @@ jobs:
         run: |
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" \
             --target "$GITHUB_SHA" \
-            --notes "Built by the release workflow from ${GITHUB_SHA::7}. No game code or game files: the launcher builds the game code once from your own dump (Xenoblade Chronicles: Definitive Edition 2.0.0)." \
+            --notes "Built by the release workflow from ${GITHUB_SHA::7}. No game code or game files: the launcher builds the game code once from your own dump (Xenoblade Chronicles: Definitive Edition 2.0.0 or 1.1.2)." \
             dist/*

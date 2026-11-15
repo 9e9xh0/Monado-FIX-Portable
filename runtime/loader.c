@@ -6,6 +6,9 @@
 
 Module g_modules[4];
 int g_nmodules;
+static char g_main_build_id[65];  // [XCDE] which game revision is loaded (the profile's versions)
+
+const char *loader_main_build_id(void) { return g_main_build_id; }
 
 enum { DT_NULL = 0, DT_PLTRELSZ = 2, DT_HASH = 4, DT_STRTAB = 5, DT_SYMTAB = 6, DT_RELA = 7, DT_RELASZ = 8,
        DT_JMPREL = 23, DT_INIT_ARRAY = 25, DT_FINI_ARRAY = 26, DT_INIT_ARRAYSZ = 27, DT_FINI_ARRAYSZ = 28 };
@@ -88,6 +91,7 @@ static void load_nso(Module *m, const char *path, uint64_t base) {
     uint8_t *raw = read_file(path, &len);
     if (!raw || memcmp(raw, "NSO0", 4)) FATAL("cannot load %s\n", path);
     verify_build_id(m, raw);  // (before anything else: a wrong game version fails here with a clear reason)
+    if (!strcmp(m->name, "main")) id_of(raw, g_main_build_id);  // (version-specific addresses use this)
     uint32_t flags = *(uint32_t *)(raw + 0xC);
     uint32_t seg[3][3];  // file_off, mem_off, size
     for (int i = 0; i < 3; i++) memcpy(seg[i], raw + 0x10 + i * 0x10, 12);

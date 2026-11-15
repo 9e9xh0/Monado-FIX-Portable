@@ -11,7 +11,7 @@ The same runtime and recompiled game code as the Windows build, compiled nativel
 - The Vulkan Memory Allocator header `vk_mem_alloc.h` (system package, or `VMA_INCLUDE_DIR=<dir>`).
 - Python 3 with `capstone unicorn lz4` for the recompiler:
   `python3 -m venv .venv && .venv/bin/pip install capstone unicorn lz4`.
-- Your own dump in `targets/` (`exefs/`, `romfs/`), the same as for the Windows build (version 2.0.0).
+- Your own dump in `targets/` (`exefs/`, `romfs/`), the same as for the Windows build (version 2.0.0 or 1.1.2).
 
 Arch / CachyOS: `pacman -S clang sdl3 vulkan-headers vulkan-icd-loader shaderc opus ffmpeg zlib vulkan-memory-allocator`.
 

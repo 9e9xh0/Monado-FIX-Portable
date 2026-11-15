@@ -7,11 +7,12 @@ runtime.
 |---|---|---|---|
 | `id` | string | `xcde` | the `games/xcde/` folder |
 | `title_id` | string | `0100ff500e34a000` | messages and save paths |
-| `version` | string | `2.0.0` | version check |
+| `version` | string | `2.0.0` | default version check |
+| `versions[]` | version entries | `{version, version_code, modules[], exefs_required[], romfs_manifest, heap_max, patches}` | additional supported versions (`1.1.2`) |
 | `modules[]` | `{name, base, lift, build_id}` | `main`/`0x7000000000`/lift, `sdk`/`0x7004000000`/lift, `subsdk0`/`0x7002000000`/no lift, `rtld` | loader and generator |
 | `romfs_manifest` | `{dirs:{name:[n_files,bytes]}, sha256}` | | FR-004 |
 | `heap_max` | bytes | | memory |
-| `patches` | path | `games/xcde/patches.py` | FR-013 |
+| `patches` | path | `games/xcde/patches.py` | FR-013 (each version names its own patch file) |
 | `hooks` | path | `games/xcde/hooks.c` | FR-012 |
 
 Rules: the runtime must not refer to a game by name; flags like `g_is_las` are replaced by profile queries.
