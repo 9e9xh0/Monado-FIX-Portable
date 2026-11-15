@@ -3164,8 +3164,9 @@ static void gpl_optimize_(void *arg) {
 
 // [XCDE] Pipeline eviction. Pipelines were never destroyed: a 2 h 19 min soak across every map went from 5,680 to
 // 21,081 and the process from 6.1 to 11.4 GB (~0.32 MB of driver memory each) - past what an 8 GB PC has. Over
-// XCDE_PIPE_BUDGET live pipelines (0 = never evict; default by RAM, T241: 8000 below 12 GB, 16000 below 24 GB, else
-// 24000 - every PC gets a cap, pipelines pile up with 32 GB too), the ones not drawn for XCDE_PIPE_MIN_AGE frames
+// XCDE_PIPE_BUDGET live pipelines (0 = never evict; default by RAM, T241/T268: a quarter of RAM at 0.32 MB each, so
+// ~6400 with 8 GB, ~9500 with 12 GB, 24000 at 32 GB and up - every PC gets a cap, pipelines pile up with 32 GB too),
+// the ones not drawn for XCDE_PIPE_MIN_AGE frames
 // (default 3600, ~1-2 min) go, least recently drawn first, down to 90 % of the budget. Only ready ones with no build /
 // optimize job queued; the Pipe stays in the table (jobs and keys point at it) with state 3, and its VkPipeline is
 // destroyed once the GPU is past every list recorded so far. A later draw builds it again (whole from the driver's
@@ -3233,8 +3234,17 @@ static void pipe_evict(void) {  // (render thread)
     if (budget < 0) {
         const char *e = getenv("XCDE_PIPE_BUDGET"), *a = getenv("XCDE_PIPE_MIN_AGE");
         int ram = SDL_GetSystemRAM();  // (MB)
-        budget = e ? atoi(e) : ram < 12000 ? 8000 : ram < 24000 ? 16000 : 24000;
-        LOG("[vk] pipeline budget %d (%d MB of RAM)%c", budget, ram, 10);
+        // [XCDE] T268: a pipeline costs ~0.32 MB of driver memory (T241), so the old count thresholds were really memory
+        // thresholds - and a 12 GB PC landed on the 16 GB tier (16000 = ~5 GB) while that same RAM also holds the game's
+        // 3.2 GB guest heap, the textures (400-500 MB), the shader pack and Windows. That is issue #94's "RAM nearly
+        // full", and on an iGPU (shared memory) it is the whole machine. A quarter of RAM at 0.32 MB (8/25) MB each is
+        // ram * 25 / 32 pipelines: 8 GB -> 6400, 12 GB -> 9539, 24 GB -> 19200, 32 GB -> 24000 (as before).
+        budget = e ? atoi(e) : ram * 25 / 32;
+        if (!e) {  // (the bounds guard the RAM-derived default; the env override means what it says)
+            if (budget < 2000) budget = 2000;  // (a floor: below this the eviction churns more than it saves)
+            if (budget > 24000) budget = 24000;
+        }
+        LOG("[vk] pipeline budget %d (~%d MB of driver memory, %d MB of RAM)%c", budget, budget * 8 / 25, ram, 10);
         min_age = a ? atoi(a) : 3600;
     }
     uint64_t now = renderer_present_count();

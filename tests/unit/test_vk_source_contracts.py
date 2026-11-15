@@ -31,12 +31,13 @@ class VulkanSourceContracts(unittest.TestCase):
         self.assertIn("LARECOMP_GPU", DEVICE)
 
     def test_pipeline_cache_input_is_bounded_and_allocation_checked(self):
-        self.assertIn("end <= 128L * 1024L * 1024L", DEVICE)
+        self.assertIn("end <= PC_CACHE_MAX", DEVICE)
+        self.assertIn("#define PC_CACHE_MAX (192L * 1024L * 1024L)", DEVICE)
         self.assertIn("if (!data || fread(data, 1, sz, fp) != sz)", DEVICE)
         self.assertIn("pipeline cache ignored: invalid size", DEVICE)
 
     def test_pipeline_cache_save_checks_size_and_allocation(self):
-        self.assertIn("sz > 128u * 1024u * 1024u", DEVICE)
+        self.assertIn("if (sz > (size_t)PC_CACHE_MAX)", DEVICE)
         self.assertIn("pipeline cache not saved: out of memory", DEVICE)
 
     def test_vulkan_memory_budget_extension_is_opt_in_setting(self):

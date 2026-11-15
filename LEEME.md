@@ -1,11 +1,57 @@
+# Cambios para subir — T268 (parpadeo y fps en sesiones largas) y T264 (iluminación de personajes)
+
+Archivos tocados:
+
+```
+runtime/nvn/vulkan/exec.c               (T264 y T268)
+runtime/nvn/vulkan/device.c             (T268)
+tests/unit/test_vk_source_contracts.py  (T268)
+docs/dev/tasks.md                       (entradas T264 y T268)
+```
+
+## T268 — por qué parpadea y pierde fps tras ~30 min (issues #25 y #94)
+
+Síntoma: con "compatibilidad de sesión larga" en automático, pasada media hora el juego empieza a parpadear (destellos
+de un frame) y pierde unos fps, y no se recupera hasta reiniciar.
+
+Evidencia (sesión real de 63 min, `build/report/build/last_game.log`, AMD iGPU, 12210 MB de RAM): 6740 → 20743
+pipelines creados, con 14400 vivos clavados en el presupuesto 16000 de T241 — la tabla por saltos de RAM metía a un
+PC de 12 GB en el escalón de 16 GB (16000 × 0.32 MB ≈ 4.6 GB) mientras esa misma RAM sostiene el heap invitado
+(3.2 GB), las texturas (400-500 MB) y Windows. Es el "RAM casi llena" de #94, y en una iGPU es la máquina entera. La
+evicción arranca en t=267 s y acaba con 6618 expulsados frente a sólo 279 reconstruidos: el juego vuelve a pedir
+pipelines ya tirados y cada reconstrucción es un tirón. Y la caché de pipelines nunca se guardaba
+(`pipeline cache not saved: 147895504 bytes exceeds 128 MiB`, 141 MiB), así que cada arranque recompilaba ~7000
+pipelines en frío, que también engorda el driver (T246) y explica el "cada vez va peor". No hay `VK_ERROR*`, ni fallos
+de asignación, ni device lost, y las texturas se quedan en 370-500 MB: no es una fuga de imágenes.
+
+### Qué cambia
+
+1. `runtime/nvn/vulkan/exec.c` (`pipe_evict`): presupuesto por defecto = un cuarto de la RAM a 0.32 MB por pipeline
+   (`ram * 25 / 32`): 8 GB → 6400, 12 GB → 9539, 24 GB → 19200, 32 GB → 24000. El suelo 2000 y el techo 24000 valen
+   sólo para el valor derivado de la RAM; `XCDE_PIPE_BUDGET` / `XCDE_PIPE_MIN_AGE` mandan tal cual. Línea nueva en el
+   log: `[vk] pipeline budget 9539 (~3052 MB of driver memory, 12210 MB of RAM)`.
+2. `runtime/nvn/vulkan/device.c`: `PC_CACHE_MAX` = 192 MiB, usado al leer y al guardar `cache/vk_pipelines.bin`. Con
+   141 MiB el blob del usuario entra y se guarda de verdad; el límite sigue ahí para no aceptar un archivo corrupto o
+   enorme.
+3. `tests/unit/test_vk_source_contracts.py`: los contratos de fuente apuntan a `PC_CACHE_MAX`.
+
+### Comprobación
+
+- Corredor del Silencio (frame 2200): md5 idéntico al de la captura aprobada de T264 (`build/cor7_2200.png`).
+- Evicción forzada (`XCDE_PIPE_BUDGET=120 XCDE_PIPE_MIN_AGE=30`): 531 expulsados y 57 reconstruidos, captura otra vez
+  con el mismo md5 — destruir y reconstruir no cambia la imagen.
+- Mundo abierto (mismo guardado, frame 3000): 9539 y 16000 dan el mismo md5.
+- `python -m unittest tests.unit.test_vk_source_contracts`: 12 pruebas OK.
+
+### Lo que queda
+
+La corrupción de modelos/texturas de #25 (distinta del parpadeo) es la carrera del worker asíncrono: apagarlo con
+`session_fix` la evita, pero cuesta 20-30 fps y más con el tiempo. No se ha reescrito a ciegas: queda como deuda
+aparte de T268.
+
+---
+
 # Iluminación de personajes (T264) — sobreexposición en interiores, oscuro a plena luz
-
-Resumen para fusionar / revisar el cambio. Los dos archivos tocados son los mismos de siempre:
-
-```
-runtime/nvn/vulkan/exec.c   ->  runtime/nvn/vulkan/exec.c
-docs/dev/tasks.md           ->  docs/dev/tasks.md
-```
 
 ## Qué cambia
 

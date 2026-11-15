@@ -617,6 +617,10 @@ static void create_device(void) {
     VK_CHECK(vkCreateCommandPool(g_vk.dev, &pi, NULL, &g_vk.pool));
 
     // pipeline cache: cache/vk_pipelines.bin (written by vk_pipeline_cache_save)
+    // [XCDE] T268: the bound used to be 128 MiB, and the 63 min session of issue #25 serialized 148 MB (141 MiB), so the
+    // cache was never written and every start compiled ~7000 pipelines cold again - which also grows the driver's own
+    // memory (T246), i.e. the "fps drops the longer I play" part of the report. 192 MiB still bounds an untrusted file.
+#define PC_CACHE_MAX (192L * 1024L * 1024L)
     size_t sz = 0;
     void *data = NULL;
     FILE *fp = fopen("cache/vk_pipelines.bin", "rb");
@@ -625,7 +629,7 @@ static void create_device(void) {
         // must never turn into an allocation failure or a NULL fread destination.
         if (fseek(fp, 0, SEEK_END) == 0) {
             long end = ftell(fp);
-            if (end > 0 && end <= 128L * 1024L * 1024L && fseek(fp, 0, SEEK_SET) == 0) {
+            if (end > 0 && end <= PC_CACHE_MAX && fseek(fp, 0, SEEK_SET) == 0) {
                 sz = (size_t)end;
                 data = malloc(sz);
                 if (!data || fread(data, 1, sz, fp) != sz) {
@@ -679,8 +683,8 @@ void vk_pipeline_cache_save(void) {
     if (getenv("LARECOMP_HIDDEN") && !getenv("XCDE_SAVE_CACHE")) return;
     size_t sz = 0;
     if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS || !sz) return;
-    if (sz > 128u * 1024u * 1024u) {
-        LOG("[vk] pipeline cache not saved: %zu bytes exceeds 128 MiB safety limit\\n", sz);
+    if (sz > (size_t)PC_CACHE_MAX) {
+        LOG("[vk] pipeline cache not saved: %zu bytes exceeds the %ld MiB safety limit\\n", sz, PC_CACHE_MAX / (1024 * 1024));
         return;
     }
     void *data = malloc(sz);

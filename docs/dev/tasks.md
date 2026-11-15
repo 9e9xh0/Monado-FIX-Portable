@@ -1394,3 +1394,34 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   la parte solar. El ancla es la etiqueta `case` a propósito: los comentarios `// pc` solo existen con
   `LARECOMP_SAVE_MSL`.
   Pendiente: decidir si se expone en el launcher.
+
+
+## Parpadeo y fps tras ~30 min — 2026-11-15 (T268)
+
+- [ ] T268 **Parpadeo (destellos de un frame) y pérdida de fps tras media hora con `session_fix` en automático
+  (issues #25 y #94):** diagnosticado con la sesión real de 63 min del usuario (`build/report/build/last_game.log`,
+  AMD iGPU, 12210 MB de RAM, `[vk] async render worker on`). No hay `VK_ERROR*`, ni fallos de asignación, ni device
+  lost, y las texturas se quedan en 370-500 MB (no es una fuga de imágenes). Lo que sí crece es el driver: 6740 ->
+  20743 pipelines creados, con 14400 vivos clavados en el presupuesto 16000 de T241 — la tabla por saltos de RAM
+  metía a un PC de 12 GB en el escalón de 16 GB (16000 x 0.32 MB ≈ 4.6 GB) mientras esa misma RAM sostiene el heap
+  invitado (3.2 GB), las texturas y Windows: es el "RAM casi llena" de #94, y en iGPU es la máquina entera. La
+  evicción arranca en t=267 s y acaba con 6618 expulsados frente a 279 reconstruidos (el juego vuelve a pedir
+  pipelines ya tirados: cada reconstrucción es un tirón), y la caché de pipelines nunca se guardó —
+  `pipeline cache not saved: 147895504 bytes exceeds 128 MiB` (141 MiB) —, así que cada arranque recompila ~7000
+  pipelines en frío, que también engorda el driver (T246) y explica el "cada vez va peor".
+  Corrección: (1) `runtime/nvn/vulkan/exec.c` (`pipe_evict`) dimensiona el presupuesto como un cuarto de la RAM a
+  0.32 MB por pipeline (`ram * 25 / 32`: 8 GB -> 6400, 12 GB -> 9539, 24 GB -> 19200, 32 GB -> 24000), con suelo 2000
+  y techo 24000 solo para el valor derivado de la RAM (`XCDE_PIPE_BUDGET` / `XCDE_PIPE_MIN_AGE` mandan tal cual) y
+  línea nueva `[vk] pipeline budget 9539 (~3052 MB of driver memory, 12210 MB of RAM)`; (2)
+  `runtime/nvn/vulkan/device.c`: `PC_CACHE_MAX` de 192 MiB para leer y guardar `cache/vk_pipelines.bin`, de modo que
+  el blob de 141 MiB del usuario entre y se guarde (sigue acotando un archivo corrupto o enorme); (3)
+  `tests/unit/test_vk_source_contracts.py` apunta a `PC_CACHE_MAX`.
+  Medido: Corredor del Silencio (frame 2200) con el presupuesto nuevo da el mismo md5 que la captura aprobada
+  (`build/cor7_2200.png`); con evicción forzada (`XCDE_PIPE_BUDGET=120 XCDE_PIPE_MIN_AGE=30`) 531 expulsados y 57
+  reconstruidos, también md5 idéntico (destruir y reconstruir no cambia la imagen); mundo abierto (mismo guardado,
+  frame 3000) con 9539 y con 16000 da el mismo md5; 12 pruebas unitarias OK.
+  La referencia `build/day_n2_3000.png` ya no sirve para comparar el mundo abierto: se capturó con otro guardado
+  (el de `save/` cambia al jugar), por eso el A/B se hizo contra el presupuesto viejo con el guardado actual.
+  Pendiente: la corrupción de modelos/texturas de #25 (distinta del parpadeo) es la carrera del worker asíncrono;
+  `session_fix` la evita pero cuesta 20-30 fps y más con el tiempo. No se reescribe el worker a ciegas. En sesión
+  larga hay que confirmar que ya no sale "pipeline cache not saved" y que el presupuesto impreso es el nuevo.
