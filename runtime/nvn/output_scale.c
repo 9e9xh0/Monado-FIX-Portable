@@ -92,9 +92,9 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     double shape = wide_test > 0 ? wide_test : (dw / dh) / (16.0 / 9.0);
     bool reshape = reshape_allowed && fabs(shape - 1.0) > 0.005;
     if (!reshape) shape = 1.0;
-    // [XCDE] T-UI-SCALE: the interface / presented target is always the game's frame placed in the window (the old
-    // "Match display" size), independent of the 3D render scale chosen below. This keeps the HUD at the window's
-    // resolution when the scene renders lower (or higher) than the window.
+    // [XCDE] T-UI-SCALE: when ui_scale is enabled, the interface / presented target is the game's frame placed in the
+    // window (the old "Match display" size), independent of the 3D render scale chosen below. This keeps the HUD at the
+    // window's resolution when the scene renders lower (or higher) than the window.
     double ui_h = reshape ? dh / g_base_h : fit;
     double ui_sx = ui_h * shape, ui_sy = ui_h;
     {   // (same 16384-pixel texture cap as the 3D targets)

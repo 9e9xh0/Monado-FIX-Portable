@@ -1,6 +1,7 @@
 # ADR 0013 - Interface resolution independent of the 3D render scale
 
-[XCDE] T-UI-SCALE, 2026-11-15. Implemented in the Vulkan backend.
+[XCDE] T-UI-SCALE, 2026-11-15. Implemented in the Vulkan backend. Opt-in: `xcde.ini` `ui_scale = 1`
+(default 0 keeps the previous single-scale behaviour).
 
 ## Context
 
@@ -62,6 +63,8 @@ no game addresses or version-specific patches and keeps the HUD/menus at the win
 
 ## Verification
 
+Measurements below are with `ui_scale = 1` (or `LARECOMP_UI_SPLIT=1`).
+
 - 1080p window, 1x 3D, 1080p interface and FSR 3: HUD text/minimap sharp at 1920x1080; `tmp` logs
   `HUD snapshot 1920x1080` (the pre-HUD upscaled scene, for frame generation). A clean run measured 41.5-42.3 fps;
   the old single-scale path at the same scene was ~55-56 fps. Screenshot crops show the sharper interface.
@@ -73,5 +76,6 @@ no game addresses or version-specific patches and keeps the HUD/menus at the win
 - Title screen (`Press Any Button`, scene and HUD in the same pass): no artefacts, 60 fps.
 - 75 % (`1440x810` 3D), Match + FSR 3 Quality (`1280x720` 3D), 2x (`2560x1440` 3D) and Dynamic all reach gameplay;
   the pre-HUD snapshot is always the interface size (1920x1080).
-- `LARECOMP_NO_UI_SPLIT=1` restores the old single-scale path; `XCDE_UI_NO_DEPTH_COPY=1` and
+- `xcde.ini` `ui_scale = 1` enables the split; the default (`0`) is the old single-scale path. For tests,
+  `LARECOMP_UI_SPLIT=1` forces it on and `LARECOMP_NO_UI_SPLIT=1` forces it off. `XCDE_UI_NO_DEPTH_COPY=1` and
   `XCDE_UI_NO_UPSCALE=1` are diagnostics for the two parts.

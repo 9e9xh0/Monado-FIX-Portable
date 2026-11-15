@@ -170,8 +170,11 @@ static const char *const k_en[][2] = {
     {"Igual que la ventana (recomendado)", "Match the window (recommended)"}, {"1x - 720p (como Switch)", "1x - 720p (like Switch)"},
     {"75 % de la ventana (3D)", "75 % of the window (3D)"}, {"50 % de la ventana (3D)", "50 % of the window (3D)"},
     {"Resolución interna 3D", "3D internal resolution"},
-    {"La interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana; esta opción cambia solo la resolución del 3D.",
-     "The interface (HUD and menus) always renders at the window's resolution; this option changes the 3D resolution only."},
+    {"Interfaz a resolución de ventana", "Interface at window resolution"},
+    {"Dibuja el HUD y los menús a la resolución de la ventana, independientemente de la resolución 3D. Con FSR 3/DLSS puede reducir los FPS; desactivado por defecto.",
+     "Draws the HUD and menus at the window resolution, independently of the 3D resolution. With FSR 3/DLSS it can reduce FPS; off by default."},
+    {"Con la interfaz a resolución de ventana activada, el HUD y los menús se dibujan a la resolución de la ventana; la resolución interna cambia solo el 3D.",
+     "With interface-at-window-resolution enabled, the HUD and menus render at the window resolution; the internal resolution changes the 3D scene only."},
     {"Dinámica (según objetivo FPS)", "Dynamic (follows FPS target)"}, {"Opciones  (F1 / Esc para volver al juego)", "Options  (F1 / Esc to go back to the game)"},
     {"Gráficos", "Graphics"}, {"Pantalla", "Display"}, {"Pantalla completa", "Fullscreen"},
     {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna", "Internal resolution"},
@@ -251,7 +254,9 @@ static void ui(void) {
             int ri = 0;
             for (int i = 0; i < 8; i++) if (k_res_mode[i] == g_settings.res_mode) ri = i;
             if (monado_combo(T("Resolución interna 3D"), &ri, TL(k_res_ui, 8).p, 8)) g_settings.res_mode = k_res_mode[ri];
-            ImGui::TextWrapped("%s", T("La interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana; esta opción cambia solo la resolución del 3D."));
+            ImGui::Checkbox(T("Interfaz a resolución de ventana"), &g_settings.ui_scale);
+            ImGui::SetItemTooltip("%s", T("Dibuja el HUD y los menús a la resolución de la ventana, independientemente de la resolución 3D. Con FSR 3/DLSS puede reducir los FPS; desactivado por defecto."));
+            ImGui::TextWrapped("%s", T("Con la interfaz a resolución de ventana activada, el HUD y los menús se dibujan a la resolución de la ventana; la resolución interna cambia solo el 3D."));
             if ((g_settings.res_mode >= 1 && g_settings.res_mode <= 8) || g_settings.res_mode == RES_1_5)
                 // [XCDE] GitHub #22: an Nx internal resolution keeps the window's shape only horizontally: in a wider-than-
                 // 16:9 window (16:10, 21:9, 32:9) the fixed line count must stretch to fill it, and the image goes soft.

@@ -90,7 +90,8 @@ void settings_load(void) {
         } else if (!strcmp(k, "upscale_sharpness")) {  // [XCDE] "default" or 0..1
             float x = strcmp(v, "default") ? (float)atof(v) : -1.0f;
             g_settings.upscale_sharpness = x < 0.0f ? -1.0f : x > 1.0f ? 1.0f : x;
-        } else if (!strcmp(k, "frame_gen")) g_settings.frame_gen = atoi(v) != 0;
+        } else if (!strcmp(k, "ui_scale")) g_settings.ui_scale = atoi(v) != 0;
+        else if (!strcmp(k, "frame_gen")) g_settings.frame_gen = atoi(v) != 0;
         else if (!strcmp(k, "cutscenes")) g_settings.cutscene_mode = !strcmp(v, "30") ? 1 : !strcmp(v, "30fg") ? 2 : 0;
         else if (!strcmp(k, "gpu_index")) { int n = atoi(v); g_settings.gpu_index = n < -1 ? -1 : n > 255 ? 255 : n; }
         else if (!strcmp(k, "gpu_uuid")) snprintf(g_settings.gpu_uuid, sizeof g_settings.gpu_uuid, "%s", v);
@@ -163,8 +164,9 @@ void settings_save(void) {
             g_settings.antialias == AA_SMAA ? "smaa" : "off");
     if (g_settings.upscale_sharpness < 0.0f) fprintf(f, "upscale_sharpness = default\n");  // [XCDE]
     else fprintf(f, "upscale_sharpness = %.3f\n", g_settings.upscale_sharpness);
-    fprintf(f, "upscale_quality = %s\nframe_gen = %d\n",
-            uq[g_settings.upscale_quality >= 0 && g_settings.upscale_quality <= 4 ? g_settings.upscale_quality : 1], g_settings.frame_gen);
+    fprintf(f, "upscale_quality = %s\nui_scale = %d\nframe_gen = %d\n",
+            uq[g_settings.upscale_quality >= 0 && g_settings.upscale_quality <= 4 ? g_settings.upscale_quality : 1],
+            g_settings.ui_scale ? 1 : 0, g_settings.frame_gen);
     fprintf(f, "depth_of_field = %d\n", !g_settings.dof_off);
     fprintf(f, "game_blur = %d\n", g_settings.game_blur);
     fprintf(f, "taa = %d\n", !g_settings.taa_off);

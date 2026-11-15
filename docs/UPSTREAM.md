@@ -34,6 +34,7 @@ Justificación en ADR 0011. Se conserva la atribución y no se incorpora código
 
 ## T-UI-SCALE — interfaz a la resolución de la ventana (2026-11-15)
 
+- Opcional: `xcde.ini` `ui_scale = 1` (por defecto `0`: se mantiene el comportamiento de una sola escala).
 - `runtime/nvn/output_scale.c/.h`: `ui_sx/ui_sy` (imagen presentada e interfaz) separados de `sx/sy` (3D).
 - `runtime/nvn/vulkan/textures.c/.h`, `exec.c`, `temporal.c/.h`: la textura de ventana guarda una imagen 3D aparte, el
   paso de composición de escena usa esa imagen, y la interfaz se dibuja a `ui_sx/ui_sy`; el upscaler temporal se ejecuta

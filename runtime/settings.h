@@ -46,7 +46,7 @@ typedef struct {
     bool fullscreen;
     int res_mode;        // 3D size: RES_MATCH, 1..8 (N x the game's frame), RES_1_5, RES_DYNAMIC, RES_Q75/50/25. The
                          // interface (HUD/menus) stays at the window's resolution (runtime/nvn/output_scale.c)
-    int upscaler;        // UPSCALE_*: how a lower 3D resolution reaches the window; the HUD is drawn after it, at output res
+    int upscaler;        // UPSCALE_*: how a lower 3D resolution reaches the window; with ui_scale the HUD follows at output res
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
@@ -86,6 +86,7 @@ typedef struct {
     bool vsync;          // [XCDE] FIFO presentation at 30 / 60 fps (xcde.ini vsync = 0/1, default 1)
     bool game_blur;      // [XCDE] the game's own AA / temporal AA / motion blur (lib_nx.ini; xcde.ini game_blur = 0/1)
     int upscale_quality; // [XCDE] UQ_*: FSR 3 / DLSS 3D render size (xcde.ini upscale_quality = native|quality|balanced|performance|ultra)
+    bool ui_scale;       // [XCDE] T-UI-SCALE: opt-in HUD/menus at window resolution (xcde.ini ui_scale = 0/1; default 0)
     bool frame_gen;      // [XCDE] FSR 3 / DLSS frame generation (xcde.ini frame_gen = 0/1)
     float upscale_sharpness; // [XCDE] RCAS strength 0 (off) .. 1 (max); < 0: each upscaler's own default (xcde_sharpness)
     int ui_lang;         // [XCDE] launcher and F1-menu language: 0 Spanish, 1 English (xcde.ini launcher_lang = es | en)

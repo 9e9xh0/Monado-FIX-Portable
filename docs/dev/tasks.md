@@ -904,8 +904,9 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   tmp_hud.frag: upscaled scene + (final - snapshot), render size bilinear, where they differ). The HUD is drawn at the
   render size (soft in Quality) but stable, no trails. HUD draws are also never jittered now (tmp_hud_started). Next
   step: the HUD rendered at the window size.
-- [x] T-UI-SCALE (2026-11-15): **HUD at the window's resolution**, independent of the 3D internal resolution. The window
-  texture keeps a 3D-sized split image for the scene composite; the interface image is always at the window's size.
+- [x] T-UI-SCALE (2026-11-15): **HUD at the window's resolution**, independent of the 3D internal resolution. Opt-in:
+  `xcde.ini` `ui_scale = 1` (default 0 keeps the old single-scale path). The window texture keeps a 3D-sized split
+  image for the scene composite; the interface image is at the window's size.
   FSR 3/DLSS run at the end of the scene, **before the HUD**, so the HUD blends over the real upscaled image. The asynchronous variant (HUD over bilinear, recomposed at present) was rejected: camera-pan captures
   showed text-core temporal std ~6 -> ~0.07 with the synchronous ordering. The scene image is kept even when 3D and
   interface scales are equal (`resolution = 1.5`, 1080p): FSR 3 at 1:1 still reconstructs the scene, and without the

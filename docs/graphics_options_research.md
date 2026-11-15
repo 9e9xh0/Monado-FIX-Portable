@@ -21,9 +21,10 @@ build/dbgcb3.log), our sampler code (textures.c ~1170), our scaling rule (textur
 | **Models / LOD** | Switch meshes, the game's LOD distances | |
 Nothing is upscaled at "match" (the image is rendered at the window size; DLSS / FSR now optional).
 
-T-UI-SCALE (2026-11-15, implemented): the HUD/interface row above now stays at the window's resolution even when the
-internal (3D) resolution is lower; the scene is upscaled into the interface image. The rest of this file predates that
-split. See `docs/adr/0013-ui-scale-decoupling.md`.
+T-UI-SCALE (2026-11-15, implemented as opt-in via `xcde.ini` `ui_scale = 1`): the HUD/interface row above can stay at
+the window's resolution even when the internal (3D) resolution is lower; the scene is upscaled into the interface image.
+The default `ui_scale = 0` keeps the previous single-scale behaviour. The rest of this file predates that split. See
+`docs/adr/0013-ui-scale-decoupling.md`.
 
 ## 2. What the game's own config exposes (lib_nx.ini; all keys the code reads are known)
 Values today -> what a PC menu could offer:

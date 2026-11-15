@@ -135,6 +135,7 @@ struct Cfg {
     int upscaler = 1;       // 0 bilinear, 1 FSR 1, 2 FSR 3.1, 3 DLSS
     float sharpness = -1.0f;  // [XCDE] RCAS strength 0..1; < 0: each upscaler's default (xcde.ini upscale_sharpness)
     int uquality = 1;       // FSR 3 / DLSS: 0 native AA, 1 quality, 2 balanced, 3 performance, 4 ultra performance
+    bool ui_scale = false;  // [XCDE] T-UI-SCALE: opt-in HUD/menus at window resolution (xcde.ini ui_scale)
     bool frame_gen = false;
     bool smaa = false;
     bool dof = true;        // the game's depth of field (T183)
@@ -221,10 +222,13 @@ static const char *const k_en[][2] = {
     {"Chino simplificado", "Chinese (Simplified)"}, {"Chino tradicional", "Chinese (Traditional)"},
     {"Pantalla", "Display"}, {"Pantalla completa", "Fullscreen"}, {"Tamaño de la ventana", "Window size"},
     {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna 3D", "3D internal resolution"},
-    {"El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; la interfaz "
-     "(HUD y menús) se dibuja siempre a la resolución de la ventana.",
-     "The original game renders at 720p. More 3D resolution = a sharper image and more GPU load; the interface "
-     "(HUD and menus) always renders at the window's resolution."},
+    {"Interfaz a resolución de ventana", "Interface at window resolution"},
+    {"Dibuja el HUD y los menús a la resolución de la ventana, independientemente de la resolución 3D. Con FSR 3/DLSS puede reducir los FPS; desactivado por defecto.",
+     "Draws the HUD and menus at the window resolution, independently of the 3D resolution. With FSR 3/DLSS it can reduce FPS; off by default."},
+    {"El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; con la interfaz "
+     "a resolución de ventana activada, el HUD y los menús también se dibujan a la resolución de la ventana.",
+     "The original game renders at 720p. More 3D resolution = a sharper image and more GPU load; with "
+     "interface-at-window-resolution enabled, the HUD and menus also render at the window resolution."},
     {"Bilineal (suave)", "Bilinear (soft)"}, {"AMD FSR 1.0 (nítido)", "AMD FSR 1.0 (sharp)"},
     {"AMD FSR 3.1 (temporal, cualquier GPU)", "AMD FSR 3.1 (temporal, any GPU)"},
     {"NVIDIA DLSS (temporal, GPU RTX)", "NVIDIA DLSS (temporal, RTX GPU)"}, {"Escalado / antialiasing", "Upscaling / anti-aliasing"},
@@ -566,6 +570,7 @@ static void load() {
             float x = strcmp(v, "default") ? (float)atof(v) : -1.0f;
             g.sharpness = x < 0.0f ? -1.0f : x > 1.0f ? 1.0f : x;
         }
+        else if (!strcmp(k, "ui_scale")) g.ui_scale = atoi(v) != 0;
         else if (!strcmp(k, "frame_gen")) g.frame_gen = atoi(v) != 0;
         else if (!strcmp(k, "antialias")) g.smaa = !strcmp(v, "smaa");
         else if (!strcmp(k, "depth_of_field")) g.dof = atoi(v) != 0;
@@ -638,7 +643,7 @@ static bool save() {
             k_wins[g.win], k_res_ini[g.res], g.upscaler_auto ? "auto" : k_ups_ini[g.upscaler], g.smaa ? "smaa" : "off", g.show_fps);
     fprintf(f, "aspect = %s\n", g.aspect == ASPECT_ORIGINAL ? "original" : "auto");
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g.vulkan_api == 12 ? "1.2" : g.vulkan_api == 13 ? "1.3" : g.vulkan_api == 14 ? "1.4" : "auto", g.fps_overlay);
-    fprintf(f, "upscale_quality = %s\nframe_gen = %d\n", k_uq_ini[g.uquality], g.frame_gen);
+    fprintf(f, "upscale_quality = %s\nui_scale = %d\nframe_gen = %d\n", k_uq_ini[g.uquality], g.ui_scale ? 1 : 0, g.frame_gen);
     if (g.sharpness < 0.0f) fprintf(f, "upscale_sharpness = default\n");
     else fprintf(f, "upscale_sharpness = %.3f\n", g.sharpness);
     fprintf(f, "depth_of_field = %d\n", g.dof);
@@ -1507,7 +1512,9 @@ static void tab_graphics() {
     ImGui::SeparatorText(T("Resolución y escalado"));
     ImGui::SetNextItemWidth(360 * g_scale);
     monado_combo(T("Resolución interna 3D"), &g.res, TL(k_res_ui, 8).p, 8);
-    ImGui::TextDisabled(T("El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; la interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana."));
+    ImGui::Checkbox(T("Interfaz a resolución de ventana"), &g.ui_scale);
+    ImGui::SetItemTooltip(T("Dibuja el HUD y los menús a la resolución de la ventana, independientemente de la resolución 3D. Con FSR 3/DLSS puede reducir los FPS; desactivado por defecto."));
+    ImGui::TextDisabled(T("El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; con la interfaz a resolución de ventana activada, el HUD y los menús también se dibujan a la resolución de la ventana."));
     const char *ups[] = {"Bilineal (suave)", "AMD FSR 1.0 (nítido)", "AMD FSR 3.1 (temporal, cualquier GPU)",
                          "NVIDIA DLSS (temporal, GPU RTX)", "AMD FSR 4 Lite (temporal, nativo)"};
     const int nups = 5;  // [XCDE] T-FSR4-LITE: the native component (Linux and Windows)

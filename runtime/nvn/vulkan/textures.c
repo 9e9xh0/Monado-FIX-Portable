@@ -260,11 +260,16 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
 // Same rules as metal.m (see the comments there).
 static float g_rs_x = 1, g_rs_y = 1;
 static float g_ui_x = 1, g_ui_y = 1;  // [XCDE] T-UI-SCALE: the presented image / interface scale
-static int ui_split_disabled(void) {  // (A/B: the old single-scale behaviour)
-    static int off = -1;
-    if (off < 0) off = getenv("LARECOMP_NO_UI_SPLIT") != NULL;
-    return off;
+// [XCDE] T-UI-SCALE is opt-in: xcde.ini ui_scale = 1, or LARECOMP_UI_SPLIT=1 for tests. LARECOMP_NO_UI_SPLIT=1 forces
+// the old single-scale behaviour even when the setting is on.
+static int ui_split_enabled(void) {
+    static int env_on = -1, env_off = -1;
+    if (env_on < 0) env_on = getenv("LARECOMP_UI_SPLIT") != NULL;
+    if (env_off < 0) env_off = getenv("LARECOMP_NO_UI_SPLIT") != NULL;
+    if (env_off) return 0;
+    return env_on || g_settings.ui_scale;
 }
+static int ui_split_disabled(void) { return !ui_split_enabled(); }
 static int ui_scales_differ(void) {  // (exact comparison would split on float round-off)
     return fabsf(g_ui_x - g_rs_x) > 0.001f || fabsf(g_ui_y - g_rs_y) > 0.001f;
 }
