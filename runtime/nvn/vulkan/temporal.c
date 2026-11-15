@@ -54,7 +54,20 @@ static bool ffx_load(void) {
     ffx_state = -1;
 #ifdef _WIN32
     HMODULE m = LoadLibraryA("amd_fidelityfx_vk.dll");
-    if (!m) { LOG("[tmp] amd_fidelityfx_vk.dll not found: FSR 3 unavailable\n"); return false; }
+    if (!m) {
+        DWORD e = GetLastError();
+        // [XCDE] T-FSR3-LOAD: "not found" said nothing: ERROR_MOD_NOT_FOUND (126) also means a DLL it imports is
+        // missing. amd_fidelityfx_vk.dll imports msvcp140.dll / vcruntime140*.dll (the x64 VC++ 2015-2022
+        // redistributable, which is NOT part of Windows); tools/make_portable.py bundles them beside the exe.
+        if (e == ERROR_MOD_NOT_FOUND)
+            LOG("[tmp] amd_fidelityfx_vk.dll cannot load: it or one of the DLLs it needs is missing (x64 VC++ 2015-2022 "
+                "runtime: msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll): FSR 3 unavailable (error %lu)\n", (unsigned long)e);
+        else if (e == ERROR_BAD_EXE_FORMAT)
+            LOG("[tmp] amd_fidelityfx_vk.dll is not 64-bit: FSR 3 unavailable (error %lu)\n", (unsigned long)e);
+        else
+            LOG("[tmp] amd_fidelityfx_vk.dll cannot load (error %lu): FSR 3 unavailable\n", (unsigned long)e);
+        return false;
+    }
     ffx_create = (PfnFfxCreateContext)(void *)GetProcAddress(m, "ffxCreateContext");
     ffx_destroy = (PfnFfxDestroyContext)(void *)GetProcAddress(m, "ffxDestroyContext");
     ffx_dispatch = (PfnFfxDispatch)(void *)GetProcAddress(m, "ffxDispatch");
