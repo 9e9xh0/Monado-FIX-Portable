@@ -1365,3 +1365,23 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   the cause if it does not clear), and a 720p / 4K capture of the same spot otherwise differs only at the run-to-run noise
   band. Not run here: `generated/` and the dump are absent - compilation only. The #96 jitter candidate is T263, separate
   PR, so this can merge and be bisected without a build.
+
+
+## Iluminación de personajes — 2026-11-14 (T264)
+
+- [ ] T264 **Sobreexposición de personajes (cara y pelo en blanco):** reproducido cargando el guardado del Corredor del
+  Silencio (Isla Prison, antorcha azul) y capturando el frame 2200 (`DRIVE_SAVE=save scripts/drive_env.sh
+  tests/routes/load_a.txt 2200 180 <nombre>`). El programa de iluminación diferida de personajes (fs invitado
+  `72c2cb3f00`, pase 179) escribía su color por encima del punto de recorte de la exposición del frame (pase 262:
+  `srgb(saturate(x*2.217))`, techo lineal 0.451), así que la cara y el pelo quedaban a 255: 12935 px ≥250 en la franja
+  del personaje frente a 1312 px ≥250 en todo el frame de referencia (`build/ref_corridor.png`), que además tiene 1307
+  px ≥250 fuera del personaje, los mismos que la captura propia: el entorno y el tonemap ya estaban bien.
+  Descartados: bloom (`XCDE_BLOOM_PREFILTER=0 XCDE_BLOOM_FILTER=0` da valores de piel idénticos), gamma/`pow(2.2)`
+  sobre la salida (chaleco negro), albedo del G-buffer (t4 cara 190,159,131 correcto), LUT y tonemap global (la
+  referencia recorta igual), constantes `cb1`/`cb3` y estructura de luces (atenuación `(1-saturate(d/25))^k` correcta).
+  Corrección en `runtime/nvn/vulkan/exec.c` (`char_light_src`, emparejada por el hash del código del programa, como los
+  reemplazos de bloom): escala por 0.35 el color final de ese pase. Con ella la cara queda en (141,112,96) y el pelo en
+  (163,139,98), el frame baja a 1526 px ≥250 (referencia 1312) y el p99 a 209.6 frente a 206.4, sin cambios en las zonas
+  sin personaje. `XCDE_CHAR_LIGHT=<factor>` ajusta el factor (`1` = valores originales).
+  Pendiente: confirmar en escenas diurnas/exteriores que 0.35 sigue siendo correcto (la referencia disponible no incluye
+  personaje) y decidir si se expone en el launcher.
