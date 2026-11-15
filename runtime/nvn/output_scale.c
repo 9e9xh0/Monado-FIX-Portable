@@ -1,6 +1,9 @@
 // Output resolution, shared by the Metal and Vulkan backends (each calls output_scale() once per presented frame).
 // Render targets the game sizes for its own frame (output_scale_set_base) are allocated at (sx, sy) times their size;
-// the image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Internal resolution" (g_settings.res_mode):
+// the image is then drawn into (vx, vy, vw, vh) of the window. (ui_sx, ui_sy) is the scale of the presented window
+// texture and the interface: it always matches the game's frame placed in the window, while (sx, sy) is the 3D render
+// scale - the Vulkan backend keeps a second, scene-sized image for the window texture so the HUD stays at ui scale.
+// Video tab "Internal resolution" (g_settings.res_mode):
 //   Match display  render at the window's own pixel size (default)
 //   1x .. 8x       N times the game's frame (720 lines x N for XCDE; wide windows keep their shape: 32:9 at 2x =
 //                  5120 x 1440); capped to the GPU's 16384-pixel texture limit
@@ -8,6 +11,8 @@
 //   .75x / .50x / .25x  of Match display (scaled up to the window - with MetalFX on macOS when chosen)
 //   Dynamic        Match display, lowered in steps while the GPU can't hold 60 fps and raised again when it can
 //                  (each change reallocates the render targets: a short hitch, so it changes rarely, with hysteresis)
+// These sizes are the 3D scene's. The interface (the presented window texture) stays at ui_sx/ui_sy, i.e. the game's
+// frame placed in the window, so HUD text and menus do not get softer when the 3D resolution is lowered.
 // Test overrides: LARECOMP_SCALE=<f> (render height = the game's frame height x f), LARECOMP_WIDE_TEST=<f> (forced shape).
 #include <math.h>
 #include <stdlib.h>
@@ -87,7 +92,16 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     double shape = wide_test > 0 ? wide_test : (dw / dh) / (16.0 / 9.0);
     bool reshape = reshape_allowed && fabs(shape - 1.0) > 0.005;
     if (!reshape) shape = 1.0;
-    // render height in units of the game's frame height
+    // [XCDE] T-UI-SCALE: the interface / presented target is always the game's frame placed in the window (the old
+    // "Match display" size), independent of the 3D render scale chosen below. This keeps the HUD at the window's
+    // resolution when the scene renders lower (or higher) than the window.
+    double ui_h = reshape ? dh / g_base_h : fit;
+    double ui_sx = ui_h * shape, ui_sy = ui_h;
+    {   // (same 16384-pixel texture cap as the 3D targets)
+        double ucap = fmin(MAX_TEX / (g_base_w * ui_sx), MAX_TEX / (g_base_h * ui_sy));
+        if (ucap < 1.0) { ui_sx *= ucap; ui_sy *= ucap; }
+    }
+    // render height in units of the game's frame height (3D scene)
     double h;
     int mode = g_settings.res_mode;
     if (mode!=RES_DYNAMIC) { g_dyn=1; g_last_t=0; g_dyn_n=g_dyn_gpu_n=g_dyn_good=0; g_dyn_dt_sum=g_dyn_gpu_sum=0; }
@@ -136,7 +150,7 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
         double rw = fmax(8.0, round(g_base_w * sx / 8.0) * 8.0), rh = fmax(8.0, round(g_base_h * sy / 8.0) * 8.0);
         sx = rw / g_base_w; sy = rh / g_base_h;
     }
-    o->sx = sx; o->sy = sy; o->shape = shape;
+    o->sx = sx; o->sy = sy; o->ui_sx = ui_sx; o->ui_sy = ui_sy; o->shape = shape;
     // where the image goes in the window: fills it when reshaped, else a fitted 16:9 box
     if (reshape) { o->vw = dw; o->vh = dh; }
     else { o->vw = g_base_w * fit; o->vh = g_base_h * fit; }

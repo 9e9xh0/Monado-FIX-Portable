@@ -1337,6 +1337,7 @@ void backend_present(NvnTexture *t) {
         last = dn;
     }
     g_last_presented = t;
+    { extern void renderer_texture_window(NvnTexture *t); renderer_texture_window(t); }  // [XCDE] T-UI-SCALE
     TexBackend *b = vk_tex(t, true);
     b->presented = true;
     vk_end_pass();
@@ -1444,6 +1445,7 @@ void backend_present(NvnTexture *t) {
             LOG("[aspect] next scene aspect %.4f (0 = original)\n", next_aspect);
         }
         renderer_set_scale((float)sx, (float)sy);
+        renderer_set_ui_scale((float)os.ui_sx, (float)os.ui_sy);
         if (aspect_changed) atomic_store(&aspect_for_render, next_aspect);
         if (probe != was_probing) atomic_store(&aspect_probe, probe);
         memcpy(g_shot_crop, crop, sizeof crop);

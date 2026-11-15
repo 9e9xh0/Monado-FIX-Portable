@@ -107,6 +107,15 @@ typedef struct TexBackend {
     uint32_t wgen;  // page write tracking generation at the last upload check (textures.c)
     uint8_t scalable;  // 0 fixed size, 1 the 16:9 scene targets (sx, sy), 2 [XCDE] T182 portrait targets (uniform)
     bool presented;
+    // [XCDE] T-UI-SCALE: a window texture is allocated at the interface scale (sx, sy) and keeps a second image at the
+    // 3D scale (split) for the scene composite; HUD passes draw into the interface image. scene_done_frame is the
+    // presented frame whose scene was upscaled into image. ui_depth is the interface-sized copy of a depth target
+    // that HUD passes test against, valid for ui_depth_frame.
+    bool ui_scaled;
+    struct TexBackend *split;
+    uint64_t scene_done_frame;
+    struct TexBackend *ui_depth;
+    uint64_t ui_depth_frame;
     uint64_t touched_frame, frame_cleared;
     uint32_t level_gen;
     float sx, sy;
@@ -132,6 +141,14 @@ typedef struct TexBackend {
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
+// [XCDE] T-UI-SCALE: interface-sized copy of a depth target, for HUD passes that target the interface image while the
+// scene depth is smaller. vk_ui_depth returns the (cached) copy; vk_ui_depth_copy brings its contents up to date for the
+// current presented frame with a nearest depth blit.
+TexBackend *vk_ui_depth(TexBackend *src, uint32_t w, uint32_t h);
+void vk_ui_depth_copy(VkCommandBuffer cb, TexBackend *src, TexBackend *dst);
+// [XCDE] T-UI-SCALE: true while the interface and 3D scales differ (a window texture has a scene-sized split image).
+// A split can also exist at equal scales while a temporal upscaler runs; that case uses tmp_enabled instead.
+bool renderer_ui_split_scales(void);
 void vk_texture_gone(NvnTexture *t);  // [XCDE] issue #25: drop snapshot caches for a freed texture
 // [XCDE] issue #7: AMD RDNA 3 only (Navi 31/32/33 + Phoenix1/Phoenix2 iGPUs).
 // Everything else (RDNA 1/2/4, Vega, NVIDIA, Intel) returns false.

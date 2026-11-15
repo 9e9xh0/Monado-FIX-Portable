@@ -904,6 +904,13 @@ unB3s\samples.txt - suspected single translator thread: a translation cache woul
   tmp_hud.frag: upscaled scene + (final - snapshot), render size bilinear, where they differ). The HUD is drawn at the
   render size (soft in Quality) but stable, no trails. HUD draws are also never jittered now (tmp_hud_started). Next
   step: the HUD rendered at the window size.
+- [x] T-UI-SCALE (2026-11-15): **HUD at the window's resolution**, independent of the 3D internal resolution. The window
+  texture keeps a 3D-sized split image for the scene composite; the interface image is always at the window's size.
+  FSR 3/DLSS run at the end of the scene, **before the HUD**, so the HUD blends over the real upscaled image. The asynchronous variant (HUD over bilinear, recomposed at present) was rejected: camera-pan captures
+  showed text-core temporal std ~6 -> ~0.07 with the synchronous ordering. The scene image is kept even when 3D and
+  interface scales are equal (`resolution = 1.5`, 1080p): FSR 3 at 1:1 still reconstructs the scene, and without the
+  split its HUD shook (text-core std ~6.9 -> ~0.035 with the split). Cost on the GTX 1050 Ti: 41-43 fps against ~55-56
+  at 1080p/720p 3D, and 30-32 against ~42 at 1080p/1080p. See `docs/adr/0013-ui-scale-decoupling.md`.
 - [x] T208 (2026-10-21, party mod session) **Saving over a save from another game version crashed** (user, a downloaded
   100% save): runtime/services/fs.c kept every file the game opened open (no on_close), so DeleteFile failed on Windows
   and the game aborted. on_close now closes IFile / IDirectory. Verified: the downloaded save loads and autosaves with

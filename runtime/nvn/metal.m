@@ -215,6 +215,10 @@ uint64_t renderer_present_count(void) { return total_frames; }
 static float g_rs_x = 1, g_rs_y = 1;
 void renderer_get_scale(float *sx, float *sy) { *sx = g_rs_x; *sy = g_rs_y; }
 void renderer_set_scale(float sx, float sy) { g_rs_x = sx; g_rs_y = sy; }
+// [XCDE] T-UI-SCALE: the Metal backend keeps one scale for now (the Vulkan backend splits the window texture into an
+// interface image and a scene image); the presented textures are still named so the API is shared.
+void renderer_set_ui_scale(float sx, float sy) { (void)sx; (void)sy; }
+void renderer_texture_window(NvnTexture *t) { if (t) t->window_tex = true; }
 
 static bool tex_scalable(const NvnTexture *t) {
     if (getenv("LARECOMP_NO_SCALE")) return false;
@@ -1004,6 +1008,7 @@ void backend_present(NvnTexture *t) {
             psx = sx, psy = sy, pdw = dw, pdh = dh;
         }
         renderer_set_scale((float)sx, (float)sy);
+        renderer_set_ui_scale((float)os.ui_sx, (float)os.ui_sy);
         if (b && b->tex) {
             id<MTLTexture> src = raw_view(b->tex);
             // SMAA (Video tab "Anti-aliasing"): first, at the game image's size (MetalFX then upscales its result)

@@ -31,3 +31,17 @@ Detalle y pruebas en `VULKAN_DLSS_FPS.md`. Los binarios NVIDIA viven solo en `sd
 - `runtime/ui/menu_vk.cpp`, nuevos helpers UI, `tools/launcher/launcher.cpp`: tema, navegación y configuración compartida. `scripts/native_tests.sh` y `tools/validate_port.py`: comprobaciones sin datos del juego.
 
 Justificación en ADR 0011. Se conserva la atribución y no se incorpora código de otros proyectos. No se ha enviado ningún cambio upstream ni publicado una distribución.
+
+## T-UI-SCALE — interfaz a la resolución de la ventana (2026-11-15)
+
+- `runtime/nvn/output_scale.c/.h`: `ui_sx/ui_sy` (imagen presentada e interfaz) separados de `sx/sy` (3D).
+- `runtime/nvn/vulkan/textures.c/.h`, `exec.c`, `temporal.c/.h`: la textura de ventana guarda una imagen 3D aparte, el
+  paso de composición de escena usa esa imagen, y la interfaz se dibuja a `ui_sx/ui_sy`; el upscaler temporal se ejecuta
+  al terminar la escena y **antes del HUD**, de modo que el HUD se mezcla sobre la imagen ya reconstruida. Se probó antes
+  la variante asíncrona (HUD sobre un fondo bilineal y `tmp_hud.frag` en el present), pero hacía vibrar los bordes
+  translúcidos del HUD al mover la cámara.
+- `runtime/nvn/objects.c`, `renderer.h`, `metal.m`: las texturas de ventana se marcan al inicializar la ventana; Metal
+  mantiene una sola escala por ahora.
+- `runtime/ui/menu_vk.cpp`, `runtime/settings.h`: textos de la opción (la resolución interna es solo 3D).
+- Detalle y mediciones en ADR 0013. No se copia código externo; la separación entre resolución de interfaz y escala
+  3D se implementa sobre el backend propio.

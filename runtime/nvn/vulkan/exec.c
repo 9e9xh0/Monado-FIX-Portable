@@ -147,6 +147,12 @@ static pthread_mutex_t seq_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool in_pass;
 static uint64_t tmp_scene_frame = ~0ull;  // [XCDE] T213: the last frame with a scene draw (jittered)
 static TexBackend *pass_dbg_rt;  // [XCDE] colour 0 of the open pass (the debug dump must save the pass's own target, not st.rt's)
+// [XCDE] T-UI-SCALE: the pass draws into the window texture's scene-sized split image (pass_window_scene) or into its
+// interface-sized image (pass_window_ui); the transition at the scene pass's end upscales the split into the interface
+// image before the HUD passes run.
+static bool pass_window_scene, pass_window_ui;
+static NvnTexture *pass_window_tex;
+static void window_scene_transition(void);
 
 uint64_t vk_completed_seq(void) {
     uint64_t v = 0;
@@ -1582,16 +1588,23 @@ static void feedback_layout(bool enter) {
 static void vk_end_pass_at(int line);
 void vk_end_pass(void) { vk_end_pass_at(0); }
 #define vk_end_pass() vk_end_pass_at(__LINE__)
+static void window_trace(const char *where);
 static bool pass_untracked;  // (T162 part 2, below)
 static void vk_end_pass_at(int line) {
     pass_untracked = true;  // [XCDE] T162 part 2 (the two tracked enders clear it after the call)
     if (!in_pass) return;
     if (prof && line < 16384) prof_end_line[line]++;
     oq_end(vk_cmd());  // [XCDE] T139
+    window_trace("end");
     vkCmdEndRendering(vk_cmd());
     in_pass = false;
     feedback_layout(false);  // [XCDE] #7
     pass_nfeedback = 0;
+    if (pass_window_scene) {  // [XCDE] T-UI-SCALE: scene composite done -> upscale it into the interface image
+        pass_window_scene = false;
+        window_scene_transition();
+    }
+    pass_window_ui = false;
     // [XCDE] T213: the first pass this frame that drew into the presented image (the scene composite: the HUD follows)
     // (only once this frame's scene was drawn: the game writes the window image earlier in the frame too - a snapshot
     // there turned the jitter off for the whole scene and DLSS / FSR got no sub-pixel detail: jagged edges)
@@ -1777,6 +1790,19 @@ static void pass_mark_attachments(void) {
 static bool split_pending;  // (split_submit: submit at the next pass boundary)
 static uint32_t split_since;
 static uint64_t pass_seq_no;  // [XCDE] T220: counts begun passes
+// [XCDE] T-UI-SCALE research: what a pass into the presented image looks like (XCDE_TRACE_WINDOW=1).
+static void window_trace(const char *where) {
+    static int on = -1;
+    if (on < 0) on = getenv("XCDE_TRACE_WINDOW") != NULL;
+    if (!on || !st.rt.color[0] || !renderer_texture_presented(st.rt.color[0])) return;
+    NvnTexture *ct = st.rt.color[0], *dt = st.rt.depth;
+    TexBackend *cb = ct->backend, *db = dt ? dt->backend : NULL;
+    LOG("[winpass] %s frame %llu seq %llu color %ux%u guest %ux%u scale %.3f/%.3f depth %s %ux%u guest %ux%u scale %.3f/%.3f hud %d scene %d tmp %d\n",
+        where, (unsigned long long)renderer_present_count(), (unsigned long long)pass_seq_no,
+        cb ? cb->width : 0, cb ? cb->height : 0, ct->width, ct->height, cb ? cb->sx : 1.0, cb ? cb->sy : 1.0,
+        db ? "yes" : "no", db ? db->width : 0, db ? db->height : 0, dt ? dt->width : 0, dt ? dt->height : 0,
+        db ? db->sx : 1.0, db ? db->sy : 1.0, (int)tmp_hud_started(), (int)(tmp_scene_frame == renderer_present_count()), (int)tmp_enabled());
+}
 static void begin_pass(void) {
     if (in_pass && !st.rt_dirty) return;
     pass_seq_no++;
@@ -1808,40 +1834,86 @@ static void begin_pass(void) {
     pass_ncolor = (uint32_t)st.rt.ncolor;
     pass_samples = 1;
     memset(pass_tb, 0, sizeof pass_tb);  // [XCDE] T152
+    // [XCDE] T-UI-SCALE: which image of the window texture this pass draws into. The first pass into it after a scene
+    // draw this frame (and before the HUD began) is the scene composite: it uses the scene-sized split image. Everything
+    // else (early full-frame writes, the HUD, menus) uses the interface-sized image.
+    pass_window_scene = pass_window_ui = false;
+    pass_window_tex = NULL;
+    {
+        NvnTexture *win_t = NULL;
+        TexBackend *win_b = NULL;
+        int nused = 0;
+        for (int i = 0; i < st.rt.ncolor; i++)
+            if (st.rt.color[i]) { nused++; if (!win_t) win_t = st.rt.color[i]; }
+        if (win_t) win_b = vk_tex(win_t, true);  // (re-create the split if the 3D/interface scales changed since the present)
+        if (nused == 1 && win_b && win_b->ui_scaled && win_b->scalable == 1 && win_b->split) {
+            bool scene = !tmp_hud_started() && tmp_scene_frame == renderer_present_count() &&
+                         win_b->scene_done_frame != renderer_present_count();
+            if (scene && st.rt.depth) {
+                TexBackend *db = st.rt.depth->backend;
+                if (!db || db->sx != win_b->split->sx || db->sy != win_b->split->sy) {
+                    static int logged;
+                    if (!logged++)
+                        LOG("[vk] UI split: scene pass depth %.2fx%.2f does not match the scene colour %.2fx%.2f; interface scale\n",
+                            db ? db->sx : 1.0, db ? db->sy : 1.0, win_b->split->sx, win_b->split->sy);
+                    scene = false;
+                }
+            }
+            if (scene) pass_window_scene = true;
+            else pass_window_ui = true;
+            pass_window_tex = win_t;
+        }
+    }
+    TexBackend *actual0 = NULL;
     for (int i = 0; i < st.rt.ncolor; i++) {
         NvnTexture *t = st.rt.color[i];
         ca[i] = (VkRenderingAttachmentInfo){.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         pass_color[i] = VK_FORMAT_UNDEFINED;
         if (!t) continue;
-        if (i < 8 && t->backend) { pass_tb[i] = t->backend; pass_tb_fmt[i] = ((TexBackend *)t->backend)->format; }
+        TexBackend *b = t->backend;
+        bool this_window = t == pass_window_tex;
+        TexBackend *tb = (this_window && pass_window_scene && b && b->split) ? b->split : b;
+        VkImageView v;
+        if (this_window && pass_window_scene && tb != b) {
+            static const VkComponentMapping id = {0};
+            v = vk_image_view(tb, VK_IMAGE_VIEW_TYPE_2D, tb->format, 0, 1, 0, 1, id, tb->aspect);
+        } else {
+            v = vk_view(t, &st.rt.cview[i], st.rt.has_cview[i], true, TEXTYPE_2D);
+        }
+        if (!v || !tb) continue;
+        if (!actual0) actual0 = tb;
+        if (i < 8) { pass_tb[i] = tb; pass_tb_fmt[i] = tb->format; }
         { extern void tmp_note_target(TexBackend *b); tmp_note_target(t->backend); }  // [XCDE] T228 (the game's velocity buffer)
         renderer_mark_gpu_owned(t);
-        VkImageView v = vk_view(t, &st.rt.cview[i], st.rt.has_cview[i], true, TEXTYPE_2D);
-        TexBackend *b = t->backend;
-        if (!v) continue;
         bool fb_layout = g_vk.feedback_loop && (draw_feedback_mask & (1u << i));  // [XCDE] #7
         if (fb_layout) {
             bool seen = false;
-            for (uint32_t k = 0; k < pass_nfeedback; k++) seen |= pass_feedback[k]->image == b->image;
-            if (!seen && pass_nfeedback < 8) pass_feedback[pass_nfeedback++] = b;
+            for (uint32_t k = 0; k < pass_nfeedback; k++) seen |= pass_feedback[k]->image == tb->image;
+            if (!seen && pass_nfeedback < 8) pass_feedback[pass_nfeedback++] = tb;
         }
         ca[i].imageView = v;
         ca[i].imageLayout = fb_layout ? VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT : VK_IMAGE_LAYOUT_GENERAL;
         ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         ca[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        bool fresh = (int)renderer_texture_level_fresh(t) | (int)renderer_texture_frame_fresh(t);  // both: each marks its state
-        if (renderer_texture_first_write(t) || fresh) {
+        if (this_window && pass_window_scene) {
+            // the split image starts fresh each frame; the scene composite covers it whole
             ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            ca[i].clearValue.color.float32[3] = fresh ? 0.0f : 1.0f;
+            ca[i].clearValue.color.float32[3] = 0.0f;
+        } else {
+            bool fresh = (int)renderer_texture_level_fresh(t) | (int)renderer_texture_frame_fresh(t);  // both: each marks its state
+            if (renderer_texture_first_write(t) || fresh) {
+                ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                ca[i].clearValue.color.float32[3] = fresh ? 0.0f : 1.0f;
+            }
         }
-        pass_color[i] = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4) && vk_format(t->format) == b->format
-                      ? vk_format(st.rt.cview[i].format) : b->format;
+        pass_color[i] = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4) && vk_format(t->format) == tb->format
+                      ? vk_format(st.rt.cview[i].format) : tb->format;
         uint32_t lv = st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0;
-        uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
-        if (!w) { renderer_texture_scale(t, &pass_sx, &pass_sy); w = ew; }
+        uint32_t ew = level_extent(tb->width, lv), eh = level_extent(tb->height, lv);
+        if (!w) { pass_sx = tb->scalable ? tb->sx : 1; pass_sy = tb->scalable ? tb->sy : 1; w = ew; }
         if (ew < minw) minw = ew;
         if (eh < minh) minh = eh;
-        pass_samples = b->samples;
+        pass_samples = tb->samples;
     }
     {   // [XCDE] R1 (docs/spec_lowend_gpu.md): trailing colour slots without an image are left out of the pass. They went
         // in as VK_NULL_HANDLE attachments - legal, but Intel's Windows driver crashes in vkCmdBeginRendering on them
@@ -1864,15 +1936,34 @@ static void begin_pass(void) {
         renderer_mark_gpu_owned(st.rt.depth);
         VkImageView v = vk_view(st.rt.depth, &st.rt.dview, st.rt.has_dview, true, TEXTYPE_2D);
         TexBackend *b = st.rt.depth->backend;
+        // [XCDE] T-UI-SCALE: a HUD pass targets the interface image but still binds the scene depth. Use an
+        // interface-sized copy of it (the scene's depth values are resolution independent), made before the HUD draws.
+        static int no_depth_copy = -1;  // (diagnostic)
+        if (no_depth_copy < 0) no_depth_copy = getenv("XCDE_UI_NO_DEPTH_COPY") != NULL;
+        if (pass_window_ui && pass_window_tex && b && !no_depth_copy) {
+            TexBackend *ui = pass_window_tex->backend;
+            if (ui && (b->sx != ui->sx || b->sy != ui->sy)) {
+                TexBackend *ud = vk_ui_depth(b, ui->width, ui->height);
+                if (ud) {
+                    vk_ui_depth_copy(cb, b, ud);
+                    vk_full_barrier(cb);  // the copy is cached this frame; later HUD passes still need ordering
+                    b = ud;
+                    static const VkComponentMapping id = {0};
+                    v = vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D, b->format, 0, 1, 0, 1, id, b->aspect);
+                } else {
+                    v = VK_NULL_HANDLE;  // (no compatible copy: HUD without depth testing rather than a size mismatch)
+                }
+            }
+        }
         if (v && renderer_format_is_depth(st.rt.depth->format)) {
             VkRenderingAttachmentInfo a = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = v,
                                            .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
                                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
             if (b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) { da = a; has_d = true; pass_depth = b->format; }
             if (b->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) { sa = a; has_s = true; pass_stencil = b->format; }
-            uint32_t lv = st.rt.has_dview && (st.rt.dview.setmask & 1) ? st.rt.dview.base_level : 0;
+            uint32_t lv = (b == st.rt.depth->backend && st.rt.has_dview && (st.rt.dview.setmask & 1)) ? st.rt.dview.base_level : 0;
             uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
-            if (!w) { renderer_texture_scale(st.rt.depth, &pass_sx, &pass_sy); w = ew; }
+            if (!w) { pass_sx = b->scalable ? b->sx : 1; pass_sy = b->scalable ? b->sy : 1; w = ew; }
             if (ew < minw) minw = ew;
             if (eh < minh) minh = eh;
             if (!pass_ncolor) pass_samples = b->samples;
@@ -1888,11 +1979,12 @@ static void begin_pass(void) {
     for (uint32_t i = 0; i < pass_ncolor; i++) if (g_watch_img && st.rt.color[i] && st.rt.color[i]->backend && ((TexBackend *)st.rt.color[i]->backend)->image == g_watch_img) vk_watch(g_watch_img, "begin_pass (COLOR attachment)");
     pass_mark_attachments();  // [XCDE] T162
     feedback_layout(true);  // [XCDE] #7
+    window_trace("begin");
     vkCmdBeginRendering(cb, &ri);
     ss_forget();  // (whatever ran between the passes may have set its own state)
     in_pass = true;
     if (oq_counting) oq_begin(cb);  // [XCDE] T139: this pass's samples count toward the open counter
-    pass_dbg_rt = st.rt.ncolor && st.rt.color[0] ? (TexBackend *)st.rt.color[0]->backend : NULL;
+    pass_dbg_rt = actual0 ? actual0 : (st.rt.ncolor && st.rt.color[0] ? (TexBackend *)st.rt.color[0]->backend : NULL);
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
     stat_passes++;
 }
@@ -6252,8 +6344,9 @@ static void draw_(CmdRec *r, bool indexed) {
         // snapshot is the scene alone and the rest is the HUD (composited back by tmp_hud.frag).
         static int pass_draws;
         static uint64_t last_pass_seq;
-        if (in_pass && tmp_enabled() && pass_dbg_rt && pass_dbg_rt->presented && tmp_scene_frame == renderer_present_count() &&
-            !tmp_hud_started() && pass_draws >= 1 && last_pass_seq == pass_seq_no)
+        // [XCDE] T-UI-SCALE: the same split is needed whenever the scene composite pass also draws the HUD, because
+        // the upscale into the interface image has to happen between them.
+        if (in_pass && pass_window_scene && pass_draws >= 1 && last_pass_seq == pass_seq_no)
             st.rt_dirty = true;
         if (last_pass_seq != pass_seq_no || st.rt_dirty || !in_pass) pass_draws = 0;
         begin_pass();
@@ -6579,7 +6672,11 @@ static void draw_(CmdRec *r, bool indexed) {
         }  // (if !ui_stretch ...)
     }
     float jx = 0, jy = 0;
-    if (tmp_enabled()) tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
+    // [XCDE] T-UI-SCALE: without a temporal upscaler the camera/scene tracking is still needed to know which pass is
+    // the scene composite (it decides when the HUD's interface image takes over). Once the HUD began there is nothing
+    // left to find this frame.
+    if ((tmp_enabled() || renderer_ui_split_scales()) && !tmp_hud_started())
+        tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
     if (tmp_enabled()) {  // [XCDE] T215: the game's velocity buffer (gTVelocity of its temporal AA / AO / shadow passes)
         // read at the gTVelocity unit of the game's own readers, found by their code hashes (container names,
         // tools/spch_attrs.py + the SPCH layout). Written in the G-buffer pass, also with the game's AA off.
@@ -7480,6 +7577,103 @@ static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *src
     vkCmdEndRendering(cb);
 }
 
+// [XCDE] T-UI-SCALE: copy a full image, or convert it to the window's colour space when the formats differ (the native
+// Linux upscalers output RGBA16F; tmp_srgb.frag encodes that linear colour into the window's RGBA8 image).
+static void window_image_to_tex(VkCommandBuffer cb, TexBackend *src, VkImageView src_view, TexBackend *dst) {
+    if (!src || !src_view || !dst) return;
+    if (src->format == dst->format && !(src->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+        vk_full_barrier(cb);
+        if (src->width == dst->width && src->height == dst->height) {
+            VkImageCopy c = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                             .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                             .extent = {dst->width, dst->height, 1}};
+            vk_watch(dst->image, "exec.c: vkCmdCopyImage (UI scene)");
+            vkCmdCopyImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+        } else {
+            VkImageBlit bl = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                              .srcOffsets = {{0, 0, 0}, {(int32_t)src->width, (int32_t)src->height, 1}},
+                              .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                              .dstOffsets = {{0, 0, 0}, {(int32_t)dst->width, (int32_t)dst->height, 1}}};
+            vk_watch(dst->image, "exec.c: vkCmdBlitImage (UI scene)");
+            vkCmdBlitImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, VK_FILTER_LINEAR);
+        }
+        vk_full_barrier(cb);
+        return;
+    }
+    if (dst->format == VK_FORMAT_R8G8B8A8_UNORM) {
+        float pe[8] = {1.0f / (float)dst->width, 1.0f / (float)dst->height};
+        post_pass(cb, "tmp_srgb.frag", &src_view, 1, dst, pe, false);  // (or a straight conversion for sRGB source)
+        vk_full_barrier(cb);
+        return;
+    }
+    static int logged;
+    if (!logged++) LOG("[vk] UI scene: cannot convert format %d to the window's %d\n", (int)src->format, (int)dst->format);
+}
+
+// [XCDE] T-UI-SCALE: FSR 1 on the 3D scene only: its result goes into the interface image, and the HUD is drawn over it.
+static void window_scene_fsr1(VkCommandBuffer cb, TexBackend *src, TexBackend *dst) {
+    static const VkComponentMapping id = {0};
+    VkImageView sv = vk_image_view(src, VK_IMAGE_VIEW_TYPE_2D, src->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
+    TexBackend *e = post_image(3, dst->width, dst->height);
+    float pe[8] = {(float)src->width / dst->width, (float)src->height / dst->height,
+                   0.5f * (float)src->width / dst->width - 0.5f, 0.5f * (float)src->height / dst->height - 0.5f,
+                   (float)src->width, (float)src->height};
+    post_pass(cb, "easu.frag", &sv, 1, e, pe, false);
+    TexBackend *out = e;
+    float sharp = xcde_sharpness(&g_settings);
+    if (sharp > 0.0f) {
+        TexBackend *r = post_image(4, dst->width, dst->height);
+        float pr[8] = {exp2f(-(2.0f - 2.0f * sharp)), 0, 0, 0, (float)dst->width, (float)dst->height};
+        VkImageView ev = post_view(e);
+        post_pass(cb, "rcas.frag", &ev, 1, r, pr, false);
+        out = r;
+    }
+    VkImageView ov = post_view(out);
+    window_image_to_tex(cb, out, ov, dst);
+}
+// [XCDE] T-UI-SCALE: the scene composite pass ended. Run the upscaler on the pre-HUD scene here, write the result into
+// the interface image, and let the HUD passes draw over it at interface resolution.
+static void window_scene_transition(void) {
+    NvnTexture *t = pass_window_tex;
+    TexBackend *b = t ? (TexBackend *)t->backend : NULL;
+    if (!b || !b->split) return;
+    TexBackend *split = b->split;
+    VkCommandBuffer cb = vk_cmd();
+    static const VkComponentMapping id = {0};
+    VkImageView sv = vk_image_view(split, VK_IMAGE_VIEW_TYPE_2D, split->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
+    static int no_upscale = -1;  // (diagnostic)
+    if (no_upscale < 0) no_upscale = getenv("XCDE_UI_NO_UPSCALE") != NULL;
+    // [XCDE] T-UI-SCALE: the upscaler runs on the scene before the HUD, and the HUD is drawn afterwards over the real
+    // upscaled picture. The asynchronous alternative (HUD over a bilinear background, then tmp_hud.frag delta) mixed
+    // the FSR-vs-bilinear difference into translucent / anti-aliased HUD pixels, which shimmered while the camera moved.
+    bool done = false;
+    bool cam = tmp_cam.ok && tmp_frame == renderer_present_count() && tmp_depth_tex && tmp_depth_tex->backend;
+    if (tmp_enabled() && cam && !no_upscale) {
+        extern void vk_frame_suspend(void);
+        extern void vk_frame_resume(void);
+        vk_frame_suspend();
+        VkImageView outv = tmp_upscale(cb, split, sv, (TexBackend *)tmp_depth_tex->backend, &tmp_cam, tmp_jit, tmp_dm1,
+                                       b->width, b->height);
+        vk_frame_resume();
+        TexBackend *out = outv ? tmp_output_tex() : NULL;
+        if (outv && out) {
+            window_image_to_tex(cb, out, outv, b);
+            done = true;
+        }
+    }
+    if (!done) {
+        if (g_settings.upscaler == UPSCALE_FSR1 && (split->width != b->width || split->height != b->height))
+            window_scene_fsr1(cb, split, b);
+        else
+            window_image_to_tex(cb, split, sv, b);
+    }
+    vk_full_barrier(cb);
+    b->scene_done_frame = renderer_present_count();
+    // The interface image is now written this frame: the HUD passes must load it, not clear it at their first use.
+    if (t) { (void)renderer_texture_frame_fresh(t); (void)renderer_texture_level_fresh(t); (void)renderer_texture_first_write(t); }
+    tmp_hud_snapshot(cb, b);  // pre-HUD upscaled scene (frame generation) and the marker that the HUD may begin
+}
+
 // The view the present samples: the game image, or its anti-aliased / upscaled version. ow x oh: the whole image's
 // size in the window (its crop is drawn into the viewport).
 static VkImageView fg_scene;  // [XCDE] this frame's upscaled scene before the HUD composite (frame generation's HUD-less copy)
@@ -7493,17 +7687,30 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
     if (oh > 16384) oh = 16384;
     bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > b->width + 1 || oh > b->height + 1);  // (an upscale only)
     bool upscaled = false;  // [XCDE] v12 #29: v is already at the output size (the SMAA below then runs at ow x oh)
+    // [XCDE] T-UI-SCALE: the window image already holds the upscaled scene + the HUD at the interface resolution; the
+    // temporal upscaler ran (or the scene was scaled) between the scene composite and the HUD passes. Nothing is
+    // upscaled here any more; only SMAA can still run on the finished image.
+    bool ui_split = b && b->ui_scaled && b->split;
+    if (ui_split) {
+        // [XCDE] T-UI-SCALE: the FSR 3/DLSS output was already written into this image before the HUD passes, so the
+        // HUD blends over the real upscaled scene and no delta composite is needed.
+        fsr = false;
+        upscaled = true;
+        fg_scene = tmp_hud_scene_view(b->width, b->height);
+    }
     // [XCDE] v12 #29: XCDE_SMAA_AFTER_UPSCALE=0 restores the behaviour before the change (no SMAA under FSR 3 / DLSS,
     // SMAA at the render resolution under FSR 1), so a tester can A/B without rebuilding.
     static int smaa_after = -1;
     if (smaa_after < 0) { const char *e = getenv("XCDE_SMAA_AFTER_UPSCALE"); smaa_after = e ? atoi(e) != 0 : 1; }
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
-    if (tmp_enabled()) {  // [XCDE] FSR 3 / DLSS (temporal.c); without this frame's camera: FSR 1 as the upscaler
+    if (tmp_enabled() && !ui_split) {
+        // [XCDE] FSR 3 / DLSS (temporal.c); without this frame's camera: FSR 1 as the upscaler. With the interface split
+        // the upscaler already ran at the scene composite, before the HUD (window_scene_transition).
         bool cam = tmp_cam.ok && tmp_frame == renderer_present_count() && tmp_depth_tex && tmp_depth_tex->backend;
         vk_frame_suspend();
-        VkImageView t = tmp_upscale(cb, b, v, cam ? (TexBackend *)tmp_depth_tex->backend : NULL, cam ? &tmp_cam : NULL, tmp_jit,
-                                    tmp_dm1, ow, oh);
+        VkImageView t = tmp_upscale(cb, b, v, cam ? (TexBackend *)tmp_depth_tex->backend : NULL, cam ? &tmp_cam : NULL,
+                                    tmp_jit, tmp_dm1, ow, oh);
 #ifdef __linux__
         if (t && (g_settings.upscaler == UPSCALE_FSR4_LITE || g_settings.upscaler == UPSCALE_FSR3)) {  // [XCDE] linear -> sRGB
             TexBackend *encoded = post_image(6, ow, oh);

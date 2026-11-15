@@ -814,8 +814,11 @@ NVN(nvnWindowInitialize) {
     LOG("[nvn] window with %d textures\n", w->num);
     {   // [XCDE] T146: the render scale is relative to the size the game presents (its window textures)
         extern void output_scale_set_base(int w, int h);
-        NvnTexture *t0 = w->num ? HOST(NvnTexture, w->textures[0]) : NULL;
+        extern void renderer_texture_window(NvnTexture *t);  // [XCDE] T-UI-SCALE: interface scale, not the 3D one
+        NvnTexture *t0 = w->num && w->textures[0] ? HOST(NvnTexture, w->textures[0]) : NULL;
         if (t0) output_scale_set_base((int)t0->width, (int)t0->height);
+        for (int i = 0; i < w->num; i++)
+            renderer_texture_window(w->textures[i] ? HOST(NvnTexture, w->textures[i]) : NULL);
     }
     RET(1);
 }

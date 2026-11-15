@@ -11,6 +11,7 @@
 
 #include "vk.h"
 #include "vkq.h"  // [XCDE] the ordered recording worker: uploads, copies and barriers queue in order with the draws
+#include "temporal.h"  // [XCDE] T-UI-SCALE: tmp_enabled (a temporal upscaler needs the scene image even at the same size)
 #include "texture_index.h"
 #include "../../settings.h"  // [XCDE] texture filtering option
 #include "shaders.h"
@@ -258,9 +259,31 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
 // ================================================================== output resolution / per-frame clears
 // Same rules as metal.m (see the comments there).
 static float g_rs_x = 1, g_rs_y = 1;
+static float g_ui_x = 1, g_ui_y = 1;  // [XCDE] T-UI-SCALE: the presented image / interface scale
+static int ui_split_disabled(void) {  // (A/B: the old single-scale behaviour)
+    static int off = -1;
+    if (off < 0) off = getenv("LARECOMP_NO_UI_SPLIT") != NULL;
+    return off;
+}
+static int ui_scales_differ(void) {  // (exact comparison would split on float round-off)
+    return fabsf(g_ui_x - g_rs_x) > 0.001f || fabsf(g_ui_y - g_rs_y) > 0.001f;
+}
+// [XCDE] T-UI-SCALE: whether the window texture keeps a scene image of its own. Different scales need one; the same scale
+// needs one too while a temporal upscaler runs, because FSR 3 / DLSS must take the scene BEFORE the HUD. Their reconstruction
+// undoes the camera jitter on everything they read, and the HUD is never jittered: with the HUD in the input it shakes while
+// the camera moves (the old at-present path at 1.5x / native, where the scene and interface sizes are equal).
+static int ui_scene_split(void) { return !ui_split_disabled() && (ui_scales_differ() || tmp_enabled()); }
 void renderer_get_scale(float *sx, float *sy) { *sx = g_rs_x; *sy = g_rs_y; }
 void renderer_set_scale(float sx, float sy) { g_rs_x = sx; g_rs_y = sy; }
+void renderer_set_ui_scale(float sx, float sy) {
+    if (ui_split_disabled()) { g_ui_x = g_rs_x; g_ui_y = g_rs_y; return; }
+    g_ui_x = sx; g_ui_y = sy;
+}
 uint64_t renderer_present_count(void);
+void renderer_texture_window(NvnTexture *t);
+bool renderer_ui_split_scales(void) {
+    return !ui_split_disabled() && ui_scales_differ();
+}
 
 static uint8_t tex_scalable(const NvnTexture *t) {
     if (getenv("LARECOMP_NO_SCALE")) return 0;
@@ -274,9 +297,11 @@ static uint8_t tex_scalable(const NvnTexture *t) {
     if (a > 0.345f && a < 0.360f) return 2;
     return 0;
 }
-// the scale a scalable target is allocated at (now)
+// the scale a scalable target is allocated at (now). [XCDE] T-UI-SCALE: window textures and the menu portraits are
+// interface pixels and follow g_ui_*; the 16:9 scene targets follow the 3D scale g_rs_*.
 static void target_scale(const TexBackend *b, float *sx, float *sy) {
-    if (b->scalable == 2) { *sx = *sy = fminf(g_rs_x, g_rs_y); return; }
+    if (b->scalable == 2) { *sx = *sy = fminf(g_ui_x, g_ui_y); return; }
+    if (b->ui_scaled) { *sx = g_ui_x; *sy = g_ui_y; return; }
     *sx = b->scalable ? g_rs_x : 1;
     *sy = b->scalable ? g_rs_y : 1;
 }
@@ -338,6 +363,80 @@ void renderer_texture_scale(NvnTexture *t, float *sx, float *sy) {
     if (b && b->scalable) { *sx = b->sx; *sy = b->sy; }
     else { *sx = 1; *sy = 1; }
 }
+static void tex_bytes_add(TexBackend *b, int sign);  // (below: statistics of the GPU images)
+
+// [XCDE] T-UI-SCALE: HUD passes target the interface image (g_ui_*) but test against the scene depth (g_rs_*). This
+// returns a depth/stencil image of the interface size for one scene depth target, created on first use.
+TexBackend *vk_ui_depth(TexBackend *src, uint32_t w, uint32_t h) {
+    if (!src || !(src->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) || !w || !h) return NULL;
+    TexBackend *d = src->ui_depth;
+    if (d && (d->width != w || d->height != h || d->format != src->format || d->aspect != src->aspect)) {
+        vk_views_forget(d);
+        if (d->image || d->mem) { tex_bytes_add(d, -1); vk_defer_image(d->image, d->mem); }
+        free(d);
+        d = NULL;
+        src->ui_depth = NULL;
+        src->ui_depth_frame = 0;
+    }
+    if (!d) {
+        if (!format_supports(src->format, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) return NULL;
+        d = calloc(1, sizeof *d);
+        if (!d) return NULL;
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (format_supports(src->format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+                                .format = src->format, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
+                                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL);
+        if (r != VK_SUCCESS) {
+            static int logged;
+            if (!logged++) LOG("[vk] UI depth image creation failed (%d); HUD passes will not depth-test\n", (int)r);
+            free(d);
+            return NULL;
+        }
+        d->format = src->format; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1; d->samples = 1;
+        d->aspect = src->aspect; d->base_type = VK_IMAGE_VIEW_TYPE_2D; d->scalable = 1; d->sx = g_ui_x; d->sy = g_ui_y;
+        VkCommandBuffer init = vk_upload_cmd();
+        vk_image_init_layout(init, d->image, d->aspect);
+        VkClearDepthStencilValue zero = {1.0f, 0};  // (stencil stays 0: the copy below carries depth only)
+        VkImageSubresourceRange rg = {d->aspect, 0, 1, 0, 1};
+        vkCmdClearDepthStencilImage(init, d->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &rg);
+        tex_bytes_add(d, 1);
+        src->ui_depth = d;
+        src->ui_depth_frame = 0;
+    }
+    return d;
+}
+
+// Bring the interface-sized copy up to date for this presented frame (nearest depth blit, or a far clear when the
+// format cannot be blitted). The scene depth is complete when the scene composite pass has ended.
+void vk_ui_depth_copy(VkCommandBuffer cb, TexBackend *src, TexBackend *dst) {
+    if (!src || !dst || !src->image || !dst->image) return;
+    if (src->ui_depth_frame == renderer_present_count()) return;
+    vk_full_barrier(cb);
+    VkImageAspectFlags aspect = (src->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT;
+    VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+    if (src->samples == 1 && format_supports(src->format, need)) {
+        VkImageBlit bl = {.srcSubresource = {aspect, 0, 0, 1},
+                          .srcOffsets = {{0, 0, 0}, {(int32_t)src->width, (int32_t)src->height, 1}},
+                          .dstSubresource = {aspect, 0, 0, 1},
+                          .dstOffsets = {{0, 0, 0}, {(int32_t)dst->width, (int32_t)dst->height, 1}}};
+        vk_watch(dst->image, "textures.c: vkCmdBlitImage (UI depth)");
+        vkCmdBlitImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, VK_FILTER_NEAREST);
+    } else {
+        static int logged;
+        if (!logged++) LOG("[vk] UI depth: format %d cannot be blitted; clearing it to far\n", (int)src->format);
+        VkClearDepthStencilValue far = {1.0f, 0};
+        VkImageSubresourceRange rg = {aspect, 0, 1, 0, 1};
+        vk_watch(dst->image, "textures.c: vkCmdClearDepthStencilImage (UI depth)");
+        vkCmdClearDepthStencilImage(cb, dst->image, VK_IMAGE_LAYOUT_GENERAL, &far, 1, &rg);
+    }
+    vk_full_barrier(cb);
+    src->ui_depth_frame = renderer_present_count();
+}
 
 // ================================================================== images
 void vk_image_init_layout(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect) {
@@ -373,6 +472,45 @@ void vk_collect_dead(void) {
 }
 
 static void tex_bytes_add(TexBackend *b, int sign);
+// [XCDE] T-UI-SCALE: the window texture's second colour image, allocated at the 3D scale. The scene composite pass
+// renders into it; the backend then upscales it into the interface-sized image before the HUD passes. Only the window
+// texture gets one, and only while the two scales differ or a temporal upscaler needs the HUD-free scene.
+static void create_split(TexBackend *b, const NvnTexture *t, VkFormat vf) {
+    if (!b->ui_scaled || b->scalable != 1 || renderer_format_is_depth(t->format)) return;
+    if (!ui_scene_split()) return;
+    uint32_t sw = (uint32_t)lroundf((float)t->width * g_rs_x);
+    uint32_t sh = (uint32_t)lroundf((float)t->height * g_rs_y);
+    if (sw < 1) sw = 1;
+    if (sh < 1) sh = 1;
+    if (!format_supports(vf, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+                             VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT)) {
+        static int logged;
+        if (!logged++) LOG("[vk] UI split: format %d cannot be a sampled colour attachment; scene and UI share one scale\n", (int)vf);
+        return;
+    }
+    TexBackend *s = calloc(1, sizeof *s);
+    if (!s) return;
+    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = vf,
+                            .extent = {sw, sh, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+                            .tiling = VK_IMAGE_TILING_OPTIMAL,
+                            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &s->image, &s->mem, NULL);
+    if (r != VK_SUCCESS) {
+        static int logged;
+        if (!logged++) LOG("[vk] UI split image creation failed (%d); scene and UI share one scale\n", (int)r);
+        free(s);
+        return;
+    }
+    s->format = vf; s->width = sw; s->height = sh; s->depth = 1; s->layers = 1; s->levels = 1; s->samples = 1;
+    s->aspect = VK_IMAGE_ASPECT_COLOR_BIT; s->base_type = VK_IMAGE_VIEW_TYPE_2D; s->scalable = 1;
+    s->sx = g_rs_x; s->sy = g_rs_y;
+    vk_image_init_layout(vk_upload_cmd(), s->image, s->aspect);
+    tex_bytes_add(s, 1);
+    b->split = s;
+}
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
     target_scale(b, &b->sx, &b->sy);
@@ -510,6 +648,7 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
         vkCmdPipelineBarrier2(cb, &di);
     }
+    create_split(b, t, vf);
 }
 
 static void defer(Dead d) {
@@ -537,11 +676,27 @@ static void tex_bytes_add(TexBackend *b, int sign) {
     if (b->astc_bw) g_tex_astc_bytes += sign * (int64_t)ai.size;
 }
 static void destroy_image(TexBackend *b) {
+    if (b->split) {  // [XCDE] T-UI-SCALE: the scene-sized image of a window texture
+        views_forget(b->split);
+        tex_bytes_add(b->split, -1);
+        if (b->split->image || b->split->mem) defer((Dead){.img = b->split->image, .mem = b->split->mem});
+        free(b->split);
+        b->split = NULL;
+    }
+    if (b->ui_depth) {  // [XCDE] T-UI-SCALE: the interface-sized copy of a scene depth target
+        views_forget(b->ui_depth);
+        tex_bytes_add(b->ui_depth, -1);
+        if (b->ui_depth->image || b->ui_depth->mem) defer((Dead){.img = b->ui_depth->image, .mem = b->ui_depth->mem});
+        free(b->ui_depth);
+        b->ui_depth = NULL;
+        b->ui_depth_frame = 0;
+    }
     views_forget(b);
     tex_bytes_add(b, -1);
     if (b->image || b->mem) defer((Dead){.img = b->image, .mem = b->mem});  // (never the same allocation twice)
     b->image = VK_NULL_HANDLE;
     b->mem = VK_NULL_HANDLE;
+    b->scene_done_frame = 0;
 }
 
 // Live game textures: an in-place reboot (vk_textures_reset) destroys them all.
@@ -569,7 +724,14 @@ static TexBackend *tex_backend(NvnTexture *t) {
     if (b) {
         float wx, wy;
         target_scale(b, &wx, &wy);
-        if (b->scalable && (b->sx != wx || b->sy != wy)) {  // output resolution changed: reallocate
+        // [XCDE] T-UI-SCALE: the window texture's scene image follows g_rs_*, the interface image g_ui_*.
+        bool split_wanted = b->ui_scaled && b->scalable == 1 && ui_scene_split();
+        uint32_t sw = (uint32_t)lroundf((float)t->width * g_rs_x), sh = (uint32_t)lroundf((float)t->height * g_rs_y);
+        if (sw < 1) sw = 1;
+        if (sh < 1) sh = 1;
+        bool split_bad = split_wanted && (!b->split || b->split->width != sw || b->split->height != sh || b->split->format != b->format);
+        bool split_extra = !split_wanted && b->split;
+        if (b->scalable && (b->sx != wx || b->sy != wy || split_bad || split_extra)) {  // resolution changed: reallocate
             destroy_image(b);
             create_image(t, b);
         }
@@ -593,10 +755,38 @@ static TexBackend *tex_backend(NvnTexture *t) {
     vk_collect_dead();
     b = calloc(1, sizeof *b);
     b->scalable = tex_scalable(t);
+    b->ui_scaled = t->window_tex;
     create_image(t, b);
     t->backend = b;
     live_add(t, b);
     return b;
+}
+// [XCDE] T-UI-SCALE: nvnWindowInitialize names the presented textures. Their interface image and the scene image then
+// follow different scales (output_scale.c: ui_sx/ui_sy vs sx/sy).
+void renderer_texture_window(NvnTexture *t) {
+    if (!t) return;
+    t->window_tex = true;
+    TexBackend *b = t->backend;
+    if (!b) return;
+    if (!b->ui_scaled) {
+        b->ui_scaled = true;
+        if (b->scalable) {
+            destroy_image(b);
+            create_image(t, b);
+        }
+    } else if (b->scalable) {
+        float wx, wy;
+        target_scale(b, &wx, &wy);
+        bool split_wanted = b->scalable == 1 && ui_scene_split();  // (split images are 16:9 scene targets only)
+        uint32_t sw = (uint32_t)lroundf((float)t->width * g_rs_x), sh = (uint32_t)lroundf((float)t->height * g_rs_y);
+        if (sw < 1) sw = 1;
+        if (sh < 1) sh = 1;
+        if (b->sx != wx || b->sy != wy || (split_wanted && (!b->split || b->split->width != sw || b->split->height != sh)) ||
+            (!split_wanted && b->split)) {
+            destroy_image(b);
+            create_image(t, b);
+        }
+    }
 }
 
 void backend_texture_destroyed(NvnTexture *t) {

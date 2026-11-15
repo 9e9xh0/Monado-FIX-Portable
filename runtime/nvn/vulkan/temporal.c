@@ -228,6 +228,8 @@ static void img_make(Img *d, VkFormat f, uint32_t w, uint32_t h, VkImageUsageFla
 }
 // (render size) 0 colour, 1 motion, 2 depth, 4 the game image before the HUD, 5 HUD mask; (window size) 3 output
 static Img img[6];
+// [XCDE] T-UI-SCALE: exec.c's scene transition copies the upscaler's output into the interface image.
+TexBackend *tmp_output_tex(void) { return img[3].b.image ? &img[3].b : NULL; }
 #ifdef __linux__  // [XCDE] the native upscalers take linear colour (tmp_prep.frag decodes sRGB; exec.c encodes the output)
 enum { F_COLOR = VK_FORMAT_R16G16B16A16_SFLOAT };
 #define FFX_COLOR FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT

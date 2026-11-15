@@ -31,6 +31,7 @@ typedef struct NvnTexture {
     NvnPool *pool;
     uint64_t pool_offset;
     void *backend;  // renderer-side texture
+    bool window_tex;  // [XCDE] T-UI-SCALE: one of nvnWindowInitialize's textures (the presented image)
     uint64_t debug_id;
     char label[64];
 } NvnTexture;

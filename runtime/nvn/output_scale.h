@@ -3,7 +3,8 @@
 #include <stdbool.h>
 
 typedef struct {
-    double sx, sy;             // render-target scale (relative to the game's frame size, output_scale_set_base)
+    double sx, sy;             // 3D render-target scale (relative to the game's frame size, output_scale_set_base)
+    double ui_sx, ui_sy;       // scale of the presented/interface targets: the game's frame placed in the window
     double shape;              // window aspect / 16:9 when the camera is widened, else 1
     double vx, vy, vw, vh;     // where the image is drawn in the window (pixels)
 } OutScale;

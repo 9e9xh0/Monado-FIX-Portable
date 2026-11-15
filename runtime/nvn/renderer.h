@@ -14,6 +14,11 @@ extern uint64_t g_guest_buffer_base;
 
 bool renderer_is_gpu_owned(NvnTexture *t);
 void renderer_flush(void);  // finish all recorded GPU work
+// [XCDE] T-UI-SCALE: the interface / presented targets' scale (output_scale.c ui_sx/ui_sy), separate from the 3D scale
+// renderer_set_scale() sets. A window texture allocated through this scale keeps the HUD at the window's resolution
+// while the 3D scene renders at the internal resolution.
+void renderer_set_ui_scale(float sx, float sy);
+void renderer_texture_window(NvnTexture *t);  // the game presents t: its backend belongs to the interface scale
 bool renderer_origin_lower_left(void);
 const char *renderer_stats(void);
 bool renderer_format_is_depth(uint32_t f);

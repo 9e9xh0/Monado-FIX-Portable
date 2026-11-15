@@ -168,7 +168,10 @@ static void feed(ImGuiIO &io, uint32_t w, uint32_t h) {
 static const char *const k_en[][2] = {
     {"AMD FSR 4 Lite (temporal, nativo)", "AMD FSR 4 Lite (temporal, native)"},  // [XCDE] T-FSR4-LITE
     {"Igual que la ventana (recomendado)", "Match the window (recommended)"}, {"1x - 720p (como Switch)", "1x - 720p (like Switch)"},
-    {"75 % de la ventana", "75 % of the window"}, {"50 % de la ventana", "50 % of the window"},
+    {"75 % de la ventana (3D)", "75 % of the window (3D)"}, {"50 % de la ventana (3D)", "50 % of the window (3D)"},
+    {"Resolución interna 3D", "3D internal resolution"},
+    {"La interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana; esta opción cambia solo la resolución del 3D.",
+     "The interface (HUD and menus) always renders at the window's resolution; this option changes the 3D resolution only."},
     {"Dinámica (según objetivo FPS)", "Dynamic (follows FPS target)"}, {"Opciones  (F1 / Esc para volver al juego)", "Options  (F1 / Esc to go back to the game)"},
     {"Gráficos", "Graphics"}, {"Pantalla", "Display"}, {"Pantalla completa", "Fullscreen"},
     {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna", "Internal resolution"},
@@ -217,7 +220,7 @@ struct TList { const char *p[8]; };
 static TList TL(const char *const *a, int n) { TList t{}; for (int i = 0; i < n && i < 8; i++) t.p[i] = T(a[i]); return t; }
 
 static const char *const k_res_ui[] = {"Igual que la ventana (recomendado)", "1x - 720p (como Switch)", "1.5x - 1080p",
-                                       "2x - 1440p", "3x - 2160p", "75 % de la ventana", "50 % de la ventana",
+                                       "2x - 1440p", "3x - 2160p", "75 % de la ventana (3D)", "50 % de la ventana (3D)",
                                        "Dinámica (según objetivo FPS)"};
 static const int k_res_mode[] = {RES_MATCH, 1, RES_1_5, 2, 3, RES_Q75, RES_Q50, RES_DYNAMIC};
 
@@ -247,7 +250,8 @@ static void ui(void) {
             ImGui::SeparatorText(T("Resolución y escalado"));
             int ri = 0;
             for (int i = 0; i < 8; i++) if (k_res_mode[i] == g_settings.res_mode) ri = i;
-            if (monado_combo(T("Resolución interna"), &ri, TL(k_res_ui, 8).p, 8)) g_settings.res_mode = k_res_mode[ri];
+            if (monado_combo(T("Resolución interna 3D"), &ri, TL(k_res_ui, 8).p, 8)) g_settings.res_mode = k_res_mode[ri];
+            ImGui::TextWrapped("%s", T("La interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana; esta opción cambia solo la resolución del 3D."));
             if ((g_settings.res_mode >= 1 && g_settings.res_mode <= 8) || g_settings.res_mode == RES_1_5)
                 // [XCDE] GitHub #22: an Nx internal resolution keeps the window's shape only horizontally: in a wider-than-
                 // 16:9 window (16:10, 21:9, 32:9) the fixed line count must stretch to fill it, and the image goes soft.

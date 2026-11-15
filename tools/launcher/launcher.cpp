@@ -184,7 +184,7 @@ static const char *const k_uq_ini[] = {"native", "quality", "balanced", "perform
 static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"};
 static const char *const k_res_ini[] = {"match", "1", "1.5", "2", "3", "75%", "50%", "dynamic"};
 static const char *const k_res_ui[] = {"Igual que la ventana (recomendado)", "1x - 720p (como Switch)", "1.5x - 1080p",
-                                       "2x - 1440p", "3x - 2160p (4K)", "75% de la ventana", "50% de la ventana",
+                                       "2x - 1440p", "3x - 2160p (4K)", "75% de la ventana (3D)", "50% de la ventana (3D)",
                                        "Dinámica (según rendimiento)"};
 static const char *const k_fps_ini[] = {"30", "60", "120", "144", "165", "unlimited"};
 static const char *const k_lang_ini[] = {"auto", "en-US", "es", "fr", "de", "it", "ja", "ko", "zh-Hans", "zh-Hant"};
@@ -220,9 +220,11 @@ static const char *const k_en[][2] = {
     {"Alemán", "German"}, {"Italiano", "Italian"}, {"Japonés", "Japanese"}, {"Coreano", "Korean"},
     {"Chino simplificado", "Chinese (Simplified)"}, {"Chino tradicional", "Chinese (Traditional)"},
     {"Pantalla", "Display"}, {"Pantalla completa", "Fullscreen"}, {"Tamaño de la ventana", "Window size"},
-    {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna", "Internal resolution"},
-    {"El juego original renderiza a 720p. Más resolución = imagen más nítida y más carga para la GPU.",
-     "The original game renders at 720p. More resolution = a sharper image and more GPU load."},
+    {"Resolución y escalado", "Resolution and scaling"}, {"Resolución interna 3D", "3D internal resolution"},
+    {"El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; la interfaz "
+     "(HUD y menús) se dibuja siempre a la resolución de la ventana.",
+     "The original game renders at 720p. More 3D resolution = a sharper image and more GPU load; the interface "
+     "(HUD and menus) always renders at the window's resolution."},
     {"Bilineal (suave)", "Bilinear (soft)"}, {"AMD FSR 1.0 (nítido)", "AMD FSR 1.0 (sharp)"},
     {"AMD FSR 3.1 (temporal, cualquier GPU)", "AMD FSR 3.1 (temporal, any GPU)"},
     {"NVIDIA DLSS (temporal, GPU RTX)", "NVIDIA DLSS (temporal, RTX GPU)"}, {"Escalado / antialiasing", "Upscaling / anti-aliasing"},
@@ -239,9 +241,9 @@ static const char *const k_en[][2] = {
     {"Nativo (solo antialiasing: DLAA / FSR Native AA)", "Native (anti-aliasing only: DLAA / FSR Native AA)"},
     {"Calidad (67 %)", "Quality (67 %)"}, {"Equilibrado (59 %)", "Balanced (59 %)"}, {"Rendimiento (50 %)", "Performance (50 %)"},
     {"Ultra rendimiento (33 %)", "Ultra performance (33 %)"}, {"Calidad del escalado", "Upscaling quality"},
-    {"Con 'Resolución interna' en 'Igual que la ventana': la resolución a la que se renderiza\n"
+    {"Con 'Resolución interna 3D' en 'Igual que la ventana': la resolución a la que se renderiza\n"
      "antes de reconstruir (porcentaje del lado de la ventana).",
-     "With 'Internal resolution' on 'Match the window': the resolution rendered\n"
+     "With '3D internal resolution' on 'Match the window': the resolution rendered\n"
      "before reconstruction (percentage of the window's side)."},
     {"Generación de frames (FSR 3)", "Frame generation (FSR 3)"},
     {"Inserta un frame interpolado entre cada dos del juego en todo el juego: el doble de imágenes\n"
@@ -1504,8 +1506,8 @@ static void tab_graphics() {
     monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, 5);
     ImGui::SeparatorText(T("Resolución y escalado"));
     ImGui::SetNextItemWidth(360 * g_scale);
-    monado_combo(T("Resolución interna"), &g.res, TL(k_res_ui, 8).p, 8);
-    ImGui::TextDisabled(T("El juego original renderiza a 720p. Más resolución = imagen más nítida y más carga para la GPU."));
+    monado_combo(T("Resolución interna 3D"), &g.res, TL(k_res_ui, 8).p, 8);
+    ImGui::TextDisabled(T("El juego original renderiza a 720p. Más resolución 3D = imagen más nítida y más carga para la GPU; la interfaz (HUD y menús) se dibuja siempre a la resolución de la ventana."));
     const char *ups[] = {"Bilineal (suave)", "AMD FSR 1.0 (nítido)", "AMD FSR 3.1 (temporal, cualquier GPU)",
                          "NVIDIA DLSS (temporal, GPU RTX)", "AMD FSR 4 Lite (temporal, nativo)"};
     const int nups = 5;  // [XCDE] T-FSR4-LITE: the native component (Linux and Windows)
@@ -1547,7 +1549,7 @@ static void tab_graphics() {
                             "Rendimiento (50 %)", "Ultra rendimiento (33 %)"};
         ImGui::SetNextItemWidth(320 * g_scale);
         monado_combo(T("Calidad del escalado"), &g.uquality, TL(uq, 5).p, 5);
-        ImGui::SetItemTooltip(T("Con 'Resolución interna' en 'Igual que la ventana': la resolución a la que se renderiza\n"
+        ImGui::SetItemTooltip(T("Con 'Resolución interna 3D' en 'Igual que la ventana': la resolución a la que se renderiza\n"
                               "antes de reconstruir (porcentaje del lado de la ventana)."));
         ImGui::Checkbox(T("Generación de frames (FSR 3)"), &g.frame_gen);
         ImGui::SetItemTooltip(T("Inserta un frame interpolado entre cada dos del juego en todo el juego: el doble de imágenes\n"

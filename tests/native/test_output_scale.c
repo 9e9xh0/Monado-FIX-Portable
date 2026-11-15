@@ -40,5 +40,19 @@ int main(void) {
     }
     g_settings.upscale_quality=UQ_QUALITY; g_settings.upscaler=UPSCALE_FSR3;
     output_scale(3840,2160,false,37,5,&o); assert(fabs(o.sx*1280-2560)<.001 && fabs(o.sy*720-1440)<.001);
-    puts("output scale: absolute limits, CPU bottleneck, profile switching, 1.5x and the Balanced grid passed"); return 0;
+    // [XCDE] T-UI-SCALE: the interface/presented target stays the game's frame placed in the window, whatever the 3D
+    // scale is. 4K Match + FSR 3 Quality: 1440p scene, 4K interface.
+    assert(fabs(o.ui_sx*1280-3840)<.001 && fabs(o.ui_sy*720-2160)<.001);
+    g_settings.res_mode=RES_1_5;
+    output_scale(3840,2160,false,38,5,&o);
+    assert(fabs(o.sx*1280-1920)<.001 && fabs(o.sy*720-1080)<.001);
+    assert(fabs(o.ui_sx*1280-3840)<.001 && fabs(o.ui_sy*720-2160)<.001);
+    g_settings.res_mode=1;  // 1x 3D, 1080p interface
+    output_scale(1920,1080,false,39,5,&o);
+    assert(fabs(o.sx*1280-1280)<.001 && fabs(o.sy*720-720)<.001);
+    assert(fabs(o.ui_sx*1280-1920)<.001 && fabs(o.ui_sy*720-1080)<.001);
+    g_settings.res_mode=RES_MATCH; g_settings.upscaler=UPSCALE_BILINEAR;  // one scale when there is nothing to upscale
+    output_scale(1920,1080,false,40,5,&o);
+    assert(fabs(o.sx-o.ui_sx)<.001 && fabs(o.sy-o.ui_sy)<.001);
+    puts("output scale: absolute limits, CPU bottleneck, profile switching, 1.5x, the Balanced grid and the 3D/UI split passed"); return 0;
 }

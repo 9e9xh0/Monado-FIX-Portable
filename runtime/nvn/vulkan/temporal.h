@@ -19,7 +19,9 @@ void tmp_reset_history(void);
 void tmp_hud_snapshot(VkCommandBuffer cb, TexBackend *b);
 bool tmp_hud_started(void);
 void tmp_set_velocity(TexBackend *v);  // [XCDE] T215: the game's own velocity buffer this frame (G-buffer, RGB10A2)
-VkImageView tmp_hud_scene_view(uint32_t w, uint32_t h);  // this frame's image before the HUD (render size) or NULL  // this frame's scene composite is done: the HUD follows (never jittered)  // [XCDE] T213: the presented image before the HUD passes    // the next frame's sub-pixel jitter (render pixels, y down)
+// This frame's image before the HUD (interface size when the window texture is split, render size otherwise), or NULL.
+VkImageView tmp_hud_scene_view(uint32_t w, uint32_t h);
+TexBackend *tmp_output_tex(void);  // [XCDE] T-UI-SCALE: the image the last tmp_upscale wrote (window size), or NULL
 // The upscaled image (out_w x out_h) of `color` (render size) or VK_NULL_HANDLE (not this frame: no camera / depth -
 // the caller presents as without it). Records into cb, outside any rendering. depth: the scene depth (depth aspect).
 VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color_view, TexBackend *depth, const TmpCamera *cam,
