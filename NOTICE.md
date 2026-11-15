@@ -54,6 +54,14 @@ Every edit to a copied file is marked `[XCDE]` (the project's working name) and 
 
 `tools/install_dlss.py` retrieves Streamline 2.14.16 from NVIDIA-RTX's official GitHub release, verifies the pinned archive SHA-256 and installs production x64 binaries into the ignored `build/` directory. The release's licence files are retained in `sdk/sl/licenses/` and `build/dlss-licenses/`; source control contains no vendor binaries. The existing local packager preserves these files and the source/hash manifest when present.
 
+## Microsoft Visual C++ runtime (Windows packages)
+
+`tools/make_portable.py` copies the x64 VC++ 2015-2022 runtime DLLs that `amd_fidelityfx_vk.dll` imports
+(`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, and any redistributable dependencies they need) from the
+build machine's Visual Studio redistributable or `System32` into the package, as Microsoft's redistributable terms
+allow for app-local deployment. They are not part of this repository. Without them FSR 3 fails to load with
+`ERROR_MOD_NOT_FOUND` on a PC that never installed the redistributable.
+
 ## Optional native FSR 4.1.2 Lite INT8 ([XCDE] T-FSR4-LITE)
 
 Native standalone backend from bbport contributors, GPL-2.0-or-later, pinned

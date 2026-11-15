@@ -85,6 +85,32 @@ class PeImports(unittest.TestCase):
         self.assertEqual(found, {})
         self.assertEqual(missing, ['nowhere-1.dll'])
 
+    def test_msvc_runtime_names(self):
+        for n in ('msvcp140.dll', 'MSVCP140_1.dll', 'msvcp140_2.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
+                  'concrt140.dll'):
+            self.assertTrue(mp.is_msvc_runtime(n), n)
+        for n in ('vulkan-1.dll', 'SDL3.dll', 'libA.dll', 'msvcp.dll', 'vcruntime.dll'):
+            self.assertFalse(mp.is_msvc_runtime(n), n)
+
+    def test_msvc_runtime_is_bundled_from_the_system_copy(self):
+        # amd_fidelityfx_vk.dll (FSR 3) imports the VC++ runtime, which is not a Windows component: it is taken from
+        # the fallback folder and goes into the package, and its own dependencies are followed too.
+        build_dir = os.path.join(self.d.name, 'build')
+        fallback = os.path.join(self.d.name, 'system32')
+        os.makedirs(build_dir)
+        os.makedirs(fallback)
+        amd = os.path.join(build_dir, 'amd_fidelityfx_vk.dll')
+        with open(amd, 'wb') as f:
+            f.write(make_pe(['msvcp140.dll', 'VCRUNTIME140.dll', 'vcruntime140_1.dll', 'driver-only.dll']))
+        with open(os.path.join(fallback, 'msvcp140.dll'), 'wb') as f:
+            f.write(make_pe(['msvcp140_1.dll']))
+        for n in ('msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'driver-only.dll'):
+            with open(os.path.join(fallback, n), 'wb') as f:
+                f.write(make_pe([]))
+        found, missing = mp.collect_dlls([amd], [build_dir], set(), [fallback], mp.is_msvc_runtime)
+        self.assertEqual(sorted(found), ['msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'])
+        self.assertEqual(missing, ['driver-only.dll'])  # (not the MSVC runtime: never copied from the OS)
+
 
 if __name__ == '__main__':
     unittest.main()
