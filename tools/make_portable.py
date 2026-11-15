@@ -5,8 +5,10 @@
 
 The result runs from anywhere (another drive, another PC, a USB disk): no MSYS2, no Git, no Python needed.
 It holds build/xcde.exe, build/xcde_launcher.exe, every non-system DLL they need (found by reading the PE import
-tables, recursively, so it does not depend on `ldd`), targets/ (a REAL copy of exefs + romfs, even if your targets/
-is a link), data/, mods/, xcde.ini / xcde_env.ini, save/ and "Play Monado.bat".
+tables, recursively, so it does not depend on `ldd`), the Visual C++ runtime the vendor DLLs import (msvcp140.dll /
+vcruntime140*.dll: not part of Windows, shipped beside the application as Microsoft's redistributable allows),
+targets/ (a REAL copy of exefs + romfs, even if your targets/ is a link), data/, mods/, xcde.ini / xcde_env.ini,
+save/ and "Play Monado.bat".
 
 NOT copied: cache/ (shader caches are rebuilt on each PC by the launcher's "Precompile shaders"; --with-cache
 copies the portable part). targets/ is copied as real files and verified (no links to your original folder).
@@ -20,6 +22,7 @@ result is checked with tools/package_guard.py.
 Only the standard library is used.
 """
 import argparse
+import glob
 import os
 import shutil
 import struct
@@ -38,6 +41,16 @@ ALWAYS_SYSTEM = {'kernel32.dll', 'user32.dll', 'gdi32.dll', 'advapi32.dll', 'she
                  'ucrtbase.dll', 'shcore.dll', 'mmdevapi.dll', 'avrt.dll', 'dxgi.dll', 'd3d11.dll', 'd3d12.dll',
                  'dwrite.dll', 'uxtheme.dll', 'wininet.dll', 'winhttp.dll', 'mfplat.dll', 'powrprof.dll', 'rpcrt4.dll',
                  'opengl32.dll', 'glu32.dll', 'combase.dll', 'wldap32.dll', 'normaliz.dll', 'ncrypt.dll'}
+
+# The Visual C++ 2015-2022 runtime is NOT part of Windows: it comes with Microsoft's redistributable. Its DLLs may
+# travel beside the application (app-local deployment) and they must: amd_fidelityfx_vk.dll imports msvcp140.dll and
+# vcruntime140*.dll, so without them FSR 3 fails to load (ERROR_MOD_NOT_FOUND) on a PC that never installed the
+# redistributable. Unlike the Windows DLLs in ALWAYS_SYSTEM, these are looked up and copied into the package.
+MSVC_RUNTIME_PREFIXES = ('msvcp140', 'vcruntime140', 'concrt140')
+
+
+def is_msvc_runtime(name):
+    return name.lower().startswith(MSVC_RUNTIME_PREFIXES)
 
 
 # ---------------------------------------------------------------- PE import tables (no dependencies)
@@ -112,8 +125,31 @@ def find_msys_bin(cli):
     return None
 
 
-def collect_dlls(exes, search_dirs, skip):
-    """Transitive closure of the non-system DLLs `exes` import. -> ({lowname: path}, [missing names])"""
+def find_msvc_runtime_dirs():
+    """Folders with the x64 VC++ 2015-2022 runtime: the Visual Studio redist tree, then System32.
+
+    VCToolsRedistDir is set in a VS developer prompt; the globs cover a normal install (e.g.
+    ...\\2022\\Community\\VC\\Redist\\MSVC\\14.40.*\\x64\\Microsoft.VC143.CRT). System32 is the fallback for machines
+    where the redistributable is installed but the VS tree is not (CI, build PCs)."""
+    dirs = []
+    env = os.environ.get('VCToolsRedistDir')
+    if env:
+        dirs += sorted(glob.glob(os.path.join(env, 'x64', 'Microsoft.VC*.CRT')))
+    for root in (r'C:\Program Files\Microsoft Visual Studio', r'C:\Program Files (x86)\Microsoft Visual Studio'):
+        dirs += sorted(glob.glob(os.path.join(root, '*', '*', 'VC', 'Redist', 'MSVC', '*', 'x64', 'Microsoft.VC*.CRT')))
+    dirs.append(os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32'))
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+def collect_dlls(exes, search_dirs, skip, fallback_dirs=(), allow_fallback=None):
+    """Transitive closure of the non-system DLLs `exes` import. -> ({lowname: path}, [missing names])
+
+    A name not found in `search_dirs` is taken from `fallback_dirs` when `allow_fallback(name)` approves it: the MSVC
+    runtime, which is copied into the package instead of being left to the Windows install."""
+    def find(dirs, low):
+        return next((os.path.join(d, n) for d in dirs if os.path.isdir(d)
+                     for n in os.listdir(d) if n.lower() == low), None)
+
     found, missing, todo = {}, set(), list(exes)
     seen = set()
     while todo:
@@ -125,8 +161,9 @@ def collect_dlls(exes, search_dirs, skip):
             seen.add(low)
             if low in skip:
                 continue
-            hit = next((os.path.join(d, n) for d in search_dirs if os.path.isdir(d)
-                        for n in os.listdir(d) if n.lower() == low), None)
+            hit = find(search_dirs, low)
+            if not hit and allow_fallback and allow_fallback(low):
+                hit = find(fallback_dirs, low)
             if hit:
                 found[low] = hit
                 todo.append(hit)
@@ -264,13 +301,21 @@ def main():
                          '--link-file xcde_imports.a), build with CMake -DMONADO_RELEASE=ON, then tools/freeze_gamebuild.py')
 
     msys = find_msys_bin(a.msys)
+    msvc = find_msvc_runtime_dirs()
     build_dlls = [os.path.join('build', f) for f in os.listdir('build') if f.lower().endswith('.dll')]
     search = [d for d in (msys, 'build') if d]
     skip = set() if a.bundle_vulkan else {'vulkan-1.dll'}
-    found, missing = collect_dlls(exes + build_dlls, search, skip)
+    found, missing = collect_dlls(exes + build_dlls, search, skip, msvc, is_msvc_runtime)
     if missing and not msys:
         sys.exit(f'MSYS2 not found (looked in C:\\msys64\\ucrt64\\bin) and these DLLs are not in build\\: {", ".join(missing)}\n'
                  'Pass --msys <folder with the DLLs>.')
+    runtime_missing = [n for n in missing if is_msvc_runtime(n)]
+    if a.release and runtime_missing:
+        sys.exit('Release package needs the x64 VC++ 2015-2022 runtime on this machine (' + ', '.join(runtime_missing) +
+                 '), but it was not found in the Visual Studio redist folder or System32: amd_fidelityfx_vk.dll (FSR 3) '
+                 'imports it. Install the Microsoft Visual C++ 2015-2022 x64 redistributable, or run this from an "x64 '
+                 'Native Tools Command Prompt for VS". Bundling it now would otherwise publish a package whose FSR 3 '
+                 'silently fails to load on a clean PC (ERROR_MOD_NOT_FOUND).')
 
     if not a.no_game:
         need = tree_size('targets')
@@ -307,6 +352,9 @@ def main():
         dst = os.path.join(out, 'build', os.path.basename(p))
         if not os.path.exists(dst):
             shutil.copy2(p, dst)
+    runtime = sorted(n for n in found if is_msvc_runtime(n))
+    if runtime:
+        print(f'  MSVC runtime bundled: {", ".join(runtime)} (from {os.path.dirname(found[runtime[0]])})')
     print(f'  {len(os.listdir(os.path.join(out, "build")))} files in build/ ({len(found)} DLLs found through the import tables)')
 
     if not a.no_game:
@@ -347,6 +395,9 @@ def main():
     unresolved = sorted(set(still))
     if unresolved:
         print('WARNING: not found in the portable folder (and not in System32): ' + ', '.join(unresolved))
+        if any(is_msvc_runtime(n) for n in unresolved):
+            print('  The MSVC runtime is not part of Windows: without it amd_fidelityfx_vk.dll (FSR 3) fails to load. '
+                  'Install the x64 VC++ 2015-2022 redistributable on this PC and package again.')
     else:
         print('Check: every DLL the programs import is inside build\\ or comes with Windows.')
     if a.release:

@@ -92,7 +92,10 @@ python3 tools/make_appimage.py --release
 ```
 
 On Windows, stage with `--platform windows --link-file xcde_imports.a` first (the game library links against the
-executable's exports), use the `windows` preset, and package with `tools/make_portable.py <out> --release`.
+executable's exports), use the `windows` preset, and package with `tools/make_portable.py <out> --release`. The package
+also carries the x64 MSVC runtime (`msvcp140.dll`, `vcruntime140*.dll`) that `amd_fidelityfx_vk.dll` imports: the
+packager takes it from the Visual Studio redist folder or `System32` and refuses `--release` when it is missing, so FSR 3
+cannot silently fail to load on a PC without the VC++ redistributable.
 
 `.github/workflows/release.yml` builds both packages with every upscaler: run it by hand, or push a `v*` tag for a
 draft GitHub release. FSR 4 Lite's model files are not packaged (they are derived from AMD's SDK): without them the
