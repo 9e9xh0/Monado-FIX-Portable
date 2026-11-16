@@ -474,12 +474,39 @@ static void ui(void) {
     ImGui::End();
 }
 
+// [XCDE] Launch hint: for the first seconds of play, a small note at the top that F1 (Start + Select on a controller)
+// opens the settings overlay. It fades out, and goes away for good once the menu has been opened.
+static const uint64_t HINT_NS = 7000000000ull, HINT_FADE_NS = 1000000000ull;
+static uint64_t hint_t0;
+static bool hint_done;
+
+static void launch_hint(float s, uint64_t now) {
+    uint64_t t = now - hint_t0;
+    float a = t + HINT_FADE_NS > HINT_NS ? (float)(HINT_NS - t) / HINT_FADE_NS : 1.0f;
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Size.x * 0.5f, 24 * s), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.85f * a);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s, 10 * s));
+    ImGui::Begin("##launch-hint", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::TextUnformatted(g_settings.ui_lang ? "Press F1 (or Start + Select) to open the settings overlay"
+                                              : "Pulsa F1 (o Start + Select) para abrir el men\xC3\xBA de opciones");
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
 extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
     static ImGuiContext *ctx;
     static float font_h;
     static uint64_t t_last;
     bool show_counter = g_settings.fps_overlay && !diag_deterministic();
-    if (!open_ && !show_counter) { perf_overlay_draw(false, 1, w, h); return; }  // (stops its GPU timing / sampling)
+    if (!hint_done) {
+        uint64_t now = SDL_GetTicksNS();
+        if (!hint_t0) hint_t0 = now;
+        if (open_ || diag_deterministic() || now - hint_t0 >= HINT_NS) hint_done = true;
+    }
+    if (!open_ && !show_counter && hint_done) { perf_overlay_draw(false, 1, w, h); return; }  // (stops its GPU timing / sampling)
     if (!ctx) {
         ctx = ImGui::CreateContext();
         ImGui::SetCurrentContext(ctx);
@@ -513,7 +540,7 @@ extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
         monado_launcher_theme(font_h / 16.0f);
         ImGui::GetStyle().WindowRounding = 12.0f * font_h / 16.0f;
         ImGui::GetStyle().WindowBorderSize = 1.0f;
-        if (!vk_imgui_backend_init()) { ImGui::DestroyContext(ctx); ctx = nullptr; open_ = false; return; }
+        if (!vk_imgui_backend_init()) { ImGui::DestroyContext(ctx); ctx = nullptr; open_ = false; hint_done = true; return; }
         ImGui_ImplVulkan_CreateFontsTexture();
     }
     ImGui::SetCurrentContext(ctx);
@@ -528,6 +555,7 @@ extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
     ImGui::NewFrame();
     if (open_) ui();
     perf_overlay_draw(show_counter, font_h / 16.0f, w, h);  // [XCDE] GitHub #39: simple / detailed (perf_overlay.h)
+    if (!hint_done && !open_) launch_hint(font_h / 16.0f, now);
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)cmd);
 }
