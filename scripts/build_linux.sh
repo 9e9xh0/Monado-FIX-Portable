@@ -16,7 +16,7 @@ CXX=${CXX:-clang++}
 PYTHON=${PYTHON:-.venv/bin/python}
 command -v "$CC" >/dev/null || { echo "missing $CC" >&2; exit 1; }
 command -v "$CXX" >/dev/null || { echo "missing $CXX" >&2; exit 1; }
-packages=(sdl3 vulkan shaderc opus libavcodec libavformat libavutil libswscale libswresample zlib)
+packages=(sdl3 vulkan shaderc opus libavcodec libavformat libavutil libswscale zlib)
 pkg-config --print-errors --exists "${packages[@]}"
 read -r -a includes <<< "$(pkg-config --cflags "${packages[@]}")"
 # Same optimization, CPU baseline and FP/aliasing policy as scripts/build_rt_gfx.sh.

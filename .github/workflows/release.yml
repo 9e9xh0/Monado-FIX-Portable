@@ -83,8 +83,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang-19 lld-19 ninja-build cmake pkg-config git glslang-tools \
-            libvulkan-dev libshaderc-dev libopus-dev zlib1g-dev libavcodec-dev libavformat-dev libavutil-dev \
-            libswscale-dev libswresample-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev \
+            nasm libvulkan-dev libshaderc-dev libopus-dev zlib1g-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev \
             libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev \
             libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libusb-1.0-0-dev libfuse2t64 file
       - name: SDL3 (not packaged by Ubuntu 24.04; the same version as the Windows build)
@@ -105,6 +105,12 @@ jobs:
           mkdir -p build/deps
           curl -fsSL -o build/deps/vk_mem_alloc.h \
             https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.3.0/include/vk_mem_alloc.h
+      - name: FFmpeg 9.0.2 - minimal LGPL (VP9 + Vorbis from WebM, no GPL codec libraries)
+        # The distro's libavcodec is a full build: it pulls every codec and its external libraries into the AppImage.
+        # The runtime only decodes the 14 VP9 + Vorbis cutscenes (runtime/hle/movie.c), so build that subset instead.
+        run: |
+          sudo bash scripts/build_ffmpeg.sh --prefix /usr/local
+          sudo ldconfig
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -190,9 +196,15 @@ jobs:
           release: false
           update: true
           install: >-
-            mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-vulkan-devel
+            mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-vulkan-devel
             mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-vulkan-memory-allocator mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-gcc
+            make nasm diffutils curl tar
+      - name: FFmpeg 9.0.2 - minimal LGPL (VP9 + Vorbis from WebM, no GPL codec libraries)
+        # The MSYS2 ffmpeg package is a full build: its import tables pull 99 DLLs (137 MB) into the ZIP. The runtime
+        # only decodes the 14 VP9 + Vorbis cutscenes (runtime/hle/movie.c), so build that subset instead.
+        shell: msys2 {0}
+        run: bash scripts/build_ffmpeg.sh --prefix /ucrt64
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

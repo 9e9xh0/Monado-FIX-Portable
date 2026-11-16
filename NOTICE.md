@@ -40,7 +40,7 @@ Every edit to a copied file is marked `[XCDE]` (the project's working name) and 
 | SDL3 | zlib |
 | Vulkan headers / loader, Vulkan Memory Allocator | Apache-2.0 / MIT |
 | shaderc (glslang, SPIRV-Tools) | Apache-2.0 |
-| FFmpeg (LGPL build from MSYS2) | LGPL-2.1+ |
+| FFmpeg 9.0.2 (minimal LGPL build: VP9/Vorbis/WebM, no GPL components; `scripts/build_ffmpeg.sh`) | LGPL-2.1+ |
 | libopus | BSD-3-Clause |
 | Capstone, Unicorn, lz4 (build-time Python tools, not linked into the game) | BSD-3-Clause / GPL-2.0 / BSD-2-Clause |
 

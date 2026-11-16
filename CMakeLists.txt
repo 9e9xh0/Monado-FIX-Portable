@@ -111,7 +111,7 @@ if(WIN32)
 
   set(GAME_LINK_LIBS)
   foreach(l SDL3.dll shaderc_shared.dll vulkan-1.dll opus.dll avcodec.dll avformat.dll avutil.dll swscale.dll
-            swresample.dll z)
+            z)
     list(APPEND GAME_LINK_LIBS "${MSYS2_PREFIX}/lib/lib${l}.a")
   endforeach()
   list(APPEND GAME_LINK_LIBS winmm dbghelp)
@@ -160,7 +160,7 @@ else()
   set(OUT "${ROOT}/build/linux")
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET sdl3 vulkan shaderc opus libavcodec libavformat libavutil libswscale
-                    libswresample zlib)
+                    zlib)
   pkg_check_modules(LAUNCHER_DEPS REQUIRED IMPORTED_TARGET sdl3 vulkan)
   set(VMA_INCLUDE_DIR "$ENV{VMA_INCLUDE_DIR}" CACHE PATH "Directory with vk_mem_alloc.h, if it is not installed system-wide")
   # scripts/build_linux.sh flags (runtime and game code alike)
