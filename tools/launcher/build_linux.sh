@@ -14,7 +14,7 @@ for f in $I/imgui.cpp $I/imgui_draw.cpp $I/imgui_tables.cpp $I/imgui_widgets.cpp
   o=build/linux/launcher/$(basename "${f%.cpp}").o
   # shared runtime headers also affect the launcher: always rebuild its translation unit
   if [[ $f == tools/launcher/launcher.cpp || ! -f $o || $f -nt $o ]]; then
-    "$CXX" -c "$f" -o "$o" -O2 -march=x86-64-v2 -std=c++17 -D_GNU_SOURCE -I$I -I$I/backends "${sdl[@]}" -w
+    "$CXX" -c "$f" -o "$o" -O2 -march=x86-64-v2 -std=c++17 "-DMONADO_VERSION=\"${MONADO_VERSION:-dev}\"" -D_GNU_SOURCE -I$I -I$I/backends "${sdl[@]}" -w
   fi
   objs+=("$o")
 done

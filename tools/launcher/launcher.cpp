@@ -27,6 +27,15 @@
 #include "../../runtime/ui/quality_controls.h"
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
+#include "update_check.h"  // GitHub #119
+// GitHub #119: this package's version (the release workflow passes the tag: cmake -DMONADO_VERSION=14.0.1) and the
+// repository whose releases the launcher checks. "dev" (a local build) checks only when asked.
+#ifndef MONADO_VERSION
+#define MONADO_VERSION "dev"
+#endif
+#ifndef MONADO_UPDATE_REPO
+#define MONADO_UPDATE_REPO "Ivanprestef2/Monado-Reborn"
+#endif
 // [XCDE] GitHub #18: the build ids of the game NSOs this exe's code was lifted from (gen.py writes these
 // with the functions). Older checkouts without them build fine, just without the version check below.
 #if __has_include("../../generated/main/main_id.h")
@@ -39,6 +48,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #define GAME_EXE "build/xcde.exe"
+#define IS_WINDOWS true
 #else
 // [XCDE] T-LINUX: the same launcher on Linux. The game is build/linux/monado (scripts/build_linux.sh); processes are
 // started with posix_spawn, folders and messages go through SDL3.
@@ -51,6 +61,7 @@
 #include <unistd.h>
 extern char **environ;
 #define GAME_EXE "build/linux/monado"
+#define IS_WINDOWS false
 #endif
 
 // ------------------------------------------------------------------ settings (same keys as settings_ini.c)
@@ -1353,6 +1364,271 @@ static void quality_from_settings(const Settings &v) {
     g.dynamic_min_height=v.dynamic_min_height; g.dynamic_max_height=v.dynamic_max_height; g.effects_off=v.effects_off;
     g.cut_fg=v.cutscene_mode==2; g.cutscenes=v.cutscene_mode ? 1 : 0;
 }
+// ------------------------------------------------------------------ GitHub #119: update check
+// At start (unless turned off) and on "Check for updates": the system's curl fetches the latest published release from
+// the GitHub API into build/update_check.json, in the background; a newer one shows a banner with its notes, the
+// package for this platform (opened in the browser) and its release page. Nothing is replaced: the package folder also
+// holds the game code built from the player's dump, saves and settings. The choices live in launcher_update.ini
+// (not xcde.ini: the game rewrites that file with its own keys).
+static void llog(const char *fmt, ...);
+static const char *const k_upd_file = "launcher_update.ini";
+static bool g_upd_auto = true;     // check when the launcher starts (launcher_update.ini check_on_start)
+static std::string g_upd_skip;     // a version the player chose to skip (launcher_update.ini skip_version)
+enum UpdState { UPD_IDLE, UPD_RUNNING, UPD_NEWER, UPD_CURRENT, UPD_FAILED };
+static UpdState g_upd_state = UPD_IDLE;
+static bool g_upd_manual, g_upd_banner_closed;
+static UpdRelease g_upd_rel;
+static std::string g_upd_error;
+#ifdef _WIN32
+static HANDLE g_upd_proc;
+#else
+static pid_t g_upd_proc;
+#endif
+static bool upd_is_release_build() { UpdVersion v; return upd_version_parse(MONADO_VERSION, v); }
+static void upd_load() {
+    FILE *f = fopen(path(k_upd_file).c_str(), "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        char *eq = strchr(line, '=');
+        if (!eq || line[0] == '#') continue;
+        *eq = 0;
+        std::string k = line, v = eq + 1;
+        while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+        while (!v.empty() && (v[0] == ' ' || v[0] == '\t')) v.erase(0, 1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\r' || v.back() == '\n' || v.back() == '\t')) v.pop_back();
+        if (k == "check_on_start") g_upd_auto = atoi(v.c_str()) != 0;
+        else if (k == "skip_version") g_upd_skip = v;
+    }
+    fclose(f);
+}
+static void upd_save() {
+    FILE *f = fopen(path(k_upd_file).c_str(), "w");
+    if (!f) return;
+    fprintf(f, "# Monado launcher: update check (GitHub #119)\ncheck_on_start = %d\nskip_version = %s\n", g_upd_auto,
+            g_upd_skip.c_str());
+    fclose(f);
+}
+static void open_url(const std::string &url) {
+#ifdef _WIN32
+    if (!SDL_OpenURL(url.c_str())) ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+#else
+    if (!SDL_OpenURL(url.c_str())) spawn_logged({"xdg-open", url}, "", false);
+#endif
+}
+static std::string upd_releases_page() { return "https://github.com/" MONADO_UPDATE_REPO "/releases"; }
+static void upd_start(bool manual) {
+    if (g_upd_state == UPD_RUNNING) return;
+    g_upd_manual = manual;
+    g_upd_banner_closed = false;
+    g_upd_error.clear();
+    std::string out = path("build/update_check.json"), log = path("build/update_check.log");
+    remove(out.c_str());
+    const std::string url = "https://api.github.com/repos/" MONADO_UPDATE_REPO "/releases/latest";
+    std::vector<std::string> args = {"-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github+json",
+                                     "-A", "Monado-launcher/" MONADO_VERSION, "-o", out, url};
+#ifdef _WIN32
+    char sys[MAX_PATH];
+    UINT n = GetSystemDirectoryA(sys, sizeof sys);
+    std::string exe = std::string(n ? sys : "C:\\Windows\\System32") + "\\curl.exe";  // (Windows 10 1803+)
+    std::string cmd = "\"" + exe + "\"";
+    for (const std::string &a : args) cmd += " \"" + a + "\"";
+    STARTUPINFOA si = {};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi = {};
+    SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+    HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) { si.dwFlags = STARTF_USESTDHANDLES; si.hStdOutput = si.hStdError = h; }
+    std::vector<char> buf(cmd.begin(), cmd.end());
+    buf.push_back(0);
+    BOOL ok = CreateProcessA(exe.c_str(), buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, g_root.c_str(), &si, &pi);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    if (!ok) {
+        g_upd_state = UPD_FAILED;
+        g_upd_error = "curl.exe could not be started (error " + std::to_string(GetLastError()) + ")";
+        return;
+    }
+    CloseHandle(pi.hThread);
+    g_upd_proc = pi.hProcess;
+#else
+    // AppImage: its LD_LIBRARY_PATH points at the bundled libraries, which are not the host curl's - drop those
+    // entries for the child (restored right after)
+    const char *ld = getenv("LD_LIBRARY_PATH"), *appdir = getenv("APPDIR");
+    std::string old_ld = ld ? ld : "";
+    if (ld && appdir && *appdir) {
+        std::string kept, item;
+        for (size_t i = 0; i <= old_ld.size(); i++) {
+            if (i < old_ld.size() && old_ld[i] != ':') { item += old_ld[i]; continue; }
+            if (!item.empty() && item.compare(0, strlen(appdir), appdir) != 0) kept += (kept.empty() ? "" : ":") + item;
+            item.clear();
+        }
+        if (kept.empty()) unsetenv("LD_LIBRARY_PATH");
+        else setenv("LD_LIBRARY_PATH", kept.c_str(), 1);
+    }
+    std::vector<std::string> av = {"curl"};
+    av.insert(av.end(), args.begin(), args.end());
+    pid_t pid = spawn_logged(av, log, true);
+    int spawn_err = errno;
+    if (ld && appdir && *appdir) setenv("LD_LIBRARY_PATH", old_ld.c_str(), 1);
+    if (!pid) {
+        g_upd_state = UPD_FAILED;
+        g_upd_error = std::string("curl could not be started (") + strerror(spawn_err) + ")";
+        return;
+    }
+    g_upd_proc = pid;
+#endif
+    g_upd_state = UPD_RUNNING;
+}
+static void upd_stop() {  // (closing the launcher)
+#ifdef _WIN32
+    if (g_upd_proc) { TerminateProcess(g_upd_proc, 1); CloseHandle(g_upd_proc); g_upd_proc = NULL; }
+#else
+    if (g_upd_proc) { kill(-g_upd_proc, SIGTERM); waitpid(g_upd_proc, NULL, 0); g_upd_proc = 0; }
+#endif
+}
+static void upd_poll() {
+    if (g_upd_state != UPD_RUNNING) return;
+    int code;
+#ifdef _WIN32
+    if (WaitForSingleObject(g_upd_proc, 0) != WAIT_OBJECT_0) return;
+    DWORD c = 1;
+    GetExitCodeProcess(g_upd_proc, &c);
+    CloseHandle(g_upd_proc);
+    g_upd_proc = NULL;
+    code = (int)c;
+#else
+    int st = 0;
+    if (waitpid(g_upd_proc, &st, WNOHANG) != g_upd_proc) return;
+    g_upd_proc = 0;
+    code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
+    std::string json;
+    if (FILE *f = fopen(path("build/update_check.json").c_str(), "rb")) {
+        char b[4096];
+        size_t n;
+        while ((n = fread(b, 1, sizeof b, f)) > 0 && json.size() < (4u << 20)) json.append(b, n);
+        fclose(f);
+    }
+    std::string err;
+    if (code != 0 || json.empty()) {
+        g_upd_state = UPD_FAILED;
+        std::string why = read_line(path("build/update_check.log"));  // (curl's own message, e.g. a TLS or DNS error)
+        g_upd_error = why.empty() ? "curl ended with code " + std::to_string(code) : why;
+    } else if (!upd_parse_release(json, IS_WINDOWS, g_upd_rel, err)) {
+        g_upd_state = UPD_FAILED;
+        g_upd_error = err;
+    } else {
+        // (a development build is not offered releases: it is newer or older than any of them)
+        g_upd_state = upd_is_release_build() && upd_compare(g_upd_rel.tag.c_str(), MONADO_VERSION) > 0 ? UPD_NEWER : UPD_CURRENT;
+    }
+    llog("update check: %s (latest %s, this %s%s%s)", g_upd_state == UPD_NEWER ? "newer release" :
+         g_upd_state == UPD_CURRENT ? "up to date" : "failed", g_upd_rel.tag.c_str(), MONADO_VERSION,
+         g_upd_error.empty() ? "" : ": ", g_upd_error.c_str());
+}
+static std::string upd_size_text(long long b) {
+    char s[32];
+    snprintf(s, sizeof s, "%.0f MB", b / 1048576.0);
+    return s;
+}
+static void upd_notes_popup() {
+    ImGui::SetNextWindowSize(ImVec2(680 * g_scale, 480 * g_scale), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("##update_notes", NULL, ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextColored(monado_teal(), "%s", upd_latin1(g_upd_rel.title.empty() ? g_upd_rel.tag : g_upd_rel.title).c_str());
+    ImGui::TextDisabled(g.ui_lang ? "Version %s - you have %s" : "Versión %s - tienes la %s",
+                        upd_plain(g_upd_rel.tag).c_str(), MONADO_VERSION);
+    ImGui::Separator();
+    static std::string shown_tag, notes;
+    if (shown_tag != g_upd_rel.tag) { shown_tag = g_upd_rel.tag; notes = upd_plain_notes(g_upd_rel.notes, 12000); }
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));  // (not the banner's colour, which is pushed around it)
+    ImGui::BeginChild("notes", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.4f), ImGuiChildFlags_Borders);
+    ImGui::TextWrapped("%s", notes.empty() ? (g.ui_lang ? "(this release has no notes)" : "(esta versión no tiene notas)")
+                                           : notes.c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    if (!g_upd_rel.asset_url.empty()) {
+        if (ImGui::Button(g.ui_lang ? "Download" : "Descargar")) open_url(g_upd_rel.asset_url);
+        ImGui::SetItemTooltip("%s (%s)", g_upd_rel.asset_name.c_str(), upd_size_text(g_upd_rel.asset_size).c_str());
+        ImGui::SameLine();
+    }
+    if (ImGui::Button(g.ui_lang ? "Open release page" : "Abrir la página de la versión"))
+        open_url(g_upd_rel.page.empty() ? upd_releases_page() : g_upd_rel.page);
+    ImGui::SameLine();
+    if (ImGui::Button(g.ui_lang ? "Close" : "Cerrar")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+// (under the header, every frame) the banner for a newer release
+static void upd_banner() {
+    upd_poll();
+    bool skipped = !g_upd_manual && !g_upd_skip.empty() && upd_plain(g_upd_skip) == upd_plain(g_upd_rel.tag);
+    if (g_upd_state == UPD_NEWER && !g_upd_banner_closed && !skipped) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.22f, 0.24f, 1));
+        ImGui::BeginChild("update_banner", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(monado_teal(), g.ui_lang ? "Monado %s is available" : "Monado %s ya está disponible",
+                           upd_plain(g_upd_rel.tag).c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled(g.ui_lang ? "(you have %s)" : "(tienes la %s)", MONADO_VERSION);
+        ImGui::SameLine();
+        if (ImGui::Button(g.ui_lang ? "What's new" : "Novedades")) ImGui::OpenPopup("##update_notes");
+        ImGui::SameLine();
+        if (ImGui::Button(g.ui_lang ? "Download" : "Descargar"))
+            open_url(!g_upd_rel.asset_url.empty() ? g_upd_rel.asset_url : g_upd_rel.page.empty() ? upd_releases_page() : g_upd_rel.page);
+        ImGui::SetItemTooltip("%s", g.ui_lang ?
+            "Opens the download in your browser. To update, extract the new package (or replace the AppImage); keep your\n"
+            "save/ folder and xcde.ini. The game code is built again from your dump on the first start." :
+            "Abre la descarga en el navegador. Para actualizar, extrae el paquete nuevo (o sustituye el AppImage);\n"
+            "conserva la carpeta save/ y xcde.ini. El código del juego se vuelve a preparar desde tu volcado al iniciar.");
+        ImGui::SameLine();
+        if (ImGui::Button(g.ui_lang ? "Skip this version" : "Omitir esta versión")) {
+            g_upd_skip = upd_plain(g_upd_rel.tag);
+            upd_save();
+            g_upd_banner_closed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(g.ui_lang ? "Later" : "Más tarde")) g_upd_banner_closed = true;
+        upd_notes_popup();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+}
+// (Home tab) the version, the startup setting and a manual check
+static void upd_section() {
+    ImGui::SeparatorText(g.ui_lang ? "Updates" : "Actualizaciones");
+    ImGui::TextDisabled(g.ui_lang ? "This version: %s" : "Esta versión: %s", MONADO_VERSION);
+    if (ImGui::Checkbox(g.ui_lang ? "Check for updates when the launcher starts" : "Buscar actualizaciones al abrir el launcher",
+                        &g_upd_auto)) upd_save();
+    ImGui::SetItemTooltip("%s", g.ui_lang ? "Asks GitHub for the latest release (" MONADO_UPDATE_REPO "). Nothing is installed by itself." :
+                                            "Pregunta a GitHub por la última versión (" MONADO_UPDATE_REPO "). No se instala nada solo.");
+    ImGui::BeginDisabled(g_upd_state == UPD_RUNNING);
+    if (ImGui::Button(g_upd_state == UPD_RUNNING ? (g.ui_lang ? "Checking..." : "Buscando...") :
+                      (g.ui_lang ? "Check for updates" : "Buscar actualizaciones"))) upd_start(true);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(g.ui_lang ? "Releases page" : "Página de versiones")) open_url(upd_releases_page());
+    switch (g_upd_state) {
+    case UPD_NEWER:
+        ImGui::TextColored(monado_teal(), g.ui_lang ? "Monado %s is available." : "Monado %s ya está disponible.",
+                           upd_plain(g_upd_rel.tag).c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton(g.ui_lang ? "Show" : "Ver")) { g_upd_manual = true; g_upd_banner_closed = false; }
+        break;
+    case UPD_CURRENT:
+        if (upd_is_release_build())
+            ImGui::TextWrapped(g.ui_lang ? "You have the latest version (%s)." : "Tienes la última versión (%s).",
+                               upd_plain(g_upd_rel.tag).c_str());
+        else
+            ImGui::TextWrapped(g.ui_lang ? "The latest release is %s (this is a development build)." :
+                               "La última versión publicada es la %s (este es un build de desarrollo).",
+                               upd_plain(g_upd_rel.tag).c_str());
+        break;
+    case UPD_FAILED:
+        ImGui::TextWrapped(g.ui_lang ? "Could not check for updates: %s" : "No se pudo buscar actualizaciones: %s",
+                           g_upd_error.c_str());
+        break;
+    default: break;
+    }
+}
+
 static XcdeGpu *adapters;
 static uint32_t adapter_count;
 static bool probed;
@@ -1376,6 +1652,7 @@ static void tab_home() {
     ImGui::TextWrapped("%s",prepared ? (g.ui_lang ? "Prepared for this executable. New areas can still need additional variants." :
         "Preparados para este ejecutable. Algunas zonas aún pueden necesitar variantes adicionales.") :
         (g.ui_lang ? "Play prepares the shader cache first. Progress can be resumed." : "Jugar prepara primero la cache de shaders. El progreso se puede retomar."));
+    upd_section();  // GitHub #119
 }
 static void make_report();
 static void tab_diagnostics() {
@@ -2055,6 +2332,8 @@ int main(int argc, char **argv) {
     ImGui_ImplSDLRenderer3_Init(ren);
     load();
     check_game_version();  // [XCDE] GitHub #18: refuse launching on another game version's files
+    upd_load();
+    if (!shot && g_upd_auto && upd_is_release_build()) upd_start(false);  // GitHub #119 (in the background)
     if (shot && argc>4 && !strcmp(argv[4],"es")) g.ui_lang=0;
     bool have_game = exists("targets/exefs/main") || exists("targets/exefs");
     bool have_exe = exists(GAME_EXE);
@@ -2091,6 +2370,7 @@ int main(int argc, char **argv) {
         ImGui::SetNextWindowSize(vp->WorkSize);
         ImGui::Begin("main", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
         launcher_header(scale);
+        upd_banner();  // GitHub #119: a newer release
 #ifndef _WIN32
         if (g_dump_pending) {
             dump_poll();
@@ -2233,6 +2513,7 @@ int main(int argc, char **argv) {
             SDL_Event wake; if (SDL_WaitEventTimeout(&wake,(SDL_GetWindowFlags(win)&SDL_WINDOW_MINIMIZED) ? 250 : 80)) SDL_PushEvent(&wake);
         }
     }
+    upd_stop();
     if (!launched) { pc_stop(); gc_stop(); fp_stop(); }  // (closing the launcher stops a precompilation; what it wrote is kept)
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
