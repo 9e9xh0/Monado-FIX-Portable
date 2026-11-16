@@ -1,4 +1,7 @@
 # Monado-Reborn
+
+<a href="https://recomplauncher.com/game/monado-fix-portable"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 ---
 
 ## 🇪🇸 Español
@@ -32,7 +35,8 @@ Este repositorio (`Monado-FIX-Portable`) toma como base el fork de `vinitaison/M
 
 1. Coloca o vincula tus carpetas `exefs` y `romfs` extraídas (versión 2.0.0) dentro de la estructura de carpetas en `/targets` (o `/targets/Exefs` y `/targets/Romfs`).
 2. Si utilizas una versión portable o precompilada, solo asegúrate de ubicar tus archivos de juego correspondientes e inicia ejecutando `Play Monado.bat`.
-3. Si prefieres compilar desde cero, ejecuta `Build Monado.bat` para instalar de forma automatizada las dependencias necesarias y compilar el proyecto.
+3. Para iniciar desde otro lanzador o acceso directo, `build/xcde.exe --game <carpeta con exefs/ y romfs/>` usa ese volcado; la forma anterior `build/xcde.exe <carpeta>` sigue funcionando.
+4. Si prefieres compilar desde cero, ejecuta `Build Monado.bat` para instalar de forma automatizada las dependencias necesarias y compilar el proyecto.
 
 ### 🛠️ Problemas Corregidos (Fixes y Changelog)
 
@@ -76,7 +80,8 @@ This repository (`Monado-FIX-Portable`) builds upon `vinitaison/Monado`'s fork (
 
 1. Place your legally dumped game `exefs` and `romfs` folders (version 2.0.0) into the `/targets` directory (`targets/Exefs` and `targets/Romfs`).
 2. If using a portable build, simply drop your game files in place and launch `Play Monado.bat`.
-3. If building from source, run `Build Monado.bat` to automatically download dependencies and build the application.
+3. To start from another launcher or shortcut, `build/xcde.exe --game <folder with exefs/ and romfs/>` uses that dump; the old `build/xcde.exe <folder>` form still works.
+4. If building from source, run `Build Monado.bat` to automatically download dependencies and build the application.
 
 ### 🛠️ Fixed Issues & Changelog
 

@@ -35,7 +35,9 @@ static bool is_link(const char *p) {
 static bool resolve(const char *p, char *out, size_t n) {
     char buf[PATH_MAX];
     if (!realpath(p, buf)) return false;
-    snprintf(out, n, "%s", buf);
+    size_t len = strlen(buf);
+    if (len >= n) return false;
+    memcpy(out, buf, len + 1);
     return true;
 }
 #define path_eq(a, b) (strcmp(a, b) == 0)
@@ -131,6 +133,11 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     for (int i = 0; i < 4; i++)
         if (c[i][0] && exists(c[i])) return (size_t)snprintf(out, n, "%s", c[i]) < n;  // (as is: a venv python must stay a link)
     return false;
+}
+
+bool rt_path_absolute(const char *path, char *out, size_t n) {
+    if (!path || !*path || !out || !n) return false;
+    return resolve(path, out, n);
 }
 
 // ---- game files

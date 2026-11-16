@@ -16,6 +16,7 @@
 #include "../gamelib.h"
 #include "../hle.h"
 #include "../kernel.h"
+#include "../paths.h"
 #include "../rt.h"
 
 const char *g_romfs_dir;
@@ -113,6 +114,24 @@ static void *watchdog_main(void *p)
     for (;;) { plat_sleep_until_ns(plat_now_ns() + (uint64_t)secs * 1000000000); LOG("[wd] ---- %u s ----"" %c", secs, 10); kernel_dump_threads(stderr); }
 }
 
+// [XCDE] --game <dir> (launchers): xcde.ini, save/, cache/ and gamebuild/ are found from the folder above build/ (where
+// "Play Monado.bat" starts us), but a launcher may start us from anywhere. On Windows, go to that install folder.
+// (Linux AppImages/launchers already run from the writable data root, so the working folder is left alone there.)
+#ifdef _WIN32
+static bool enter_install_dir(void) {
+    char dir[1024];
+    if (!plat_exe_path(dir, sizeof dir)) return false;
+    char *exe = strrchr(dir, '\\');
+    if (!exe) return false;
+    *exe = 0;  // <install>\build
+    char *build = strrchr(dir, '\\');
+    if (!build || _stricmp(build + 1, "build") != 0) return false;
+    *build = 0;  // <install>
+    if (dir[0] && dir[1] == ':' && !dir[2]) { dir[2] = '\\'; dir[3] = 0; }  // "C:" -> "C:\"
+    return SetCurrentDirectoryA(dir) != 0;
+}
+#endif
+
 
 int main(int argc, char **argv) {
     if (argc >= 6 && !strcmp(argv[1], "--minidump")) return diag_minidump_helper(argc, argv);  // [XCDE] T028: crash helper process
@@ -124,10 +143,25 @@ int main(int argc, char **argv) {
 #endif
     plat_init();
     setvbuf(stderr, NULL, _IONBF, 0);
-    if (argc < 2) { fprintf(stderr, "usage: xcde_boot <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
-    const char *root = argv[1];
-    int seconds = argc > 2 ? atoi(argv[2]) : 20;
-    char exefs[1024], romfs[1024], npdm_path[1024];
+    bool game_opt = argc >= 2 && !strcmp(argv[1], "--game");  // [XCDE] the same dump folder by name, from a launcher
+    int first = game_opt ? 2 : 1;
+    if (argc <= first) { fprintf(stderr, "usage: xcde_boot [--game] <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
+    const char *root = argv[first];
+    int seconds = argc > first + 1 ? atoi(argv[first + 1]) : 20;
+    char abs_root[1024];
+    if (game_opt) {
+        // Make the dump path independent of the launcher's working folder before changing ours.
+        if (!rt_path_absolute(root, abs_root, sizeof abs_root)) {
+            fprintf(stderr, "xcde: --game folder not found: %s\n", root);
+            return 2;
+        }
+        root = abs_root;
+#ifdef _WIN32
+        if (!enter_install_dir())
+            fprintf(stderr, "xcde: warning: could not switch to the install folder; settings and saves may go elsewhere\n");
+#endif
+    }
+    char exefs[1200], romfs[1200], npdm_path[1200];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
     snprintf(npdm_path, sizeof npdm_path, "%s/main.npdm", exefs);
