@@ -23,6 +23,16 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# The GLib / GTK desktop stack is the host's too (GitHub #99). The host's own GTK (which SDL3 loads in the launcher)
+# and its plugins (gvfs GIO modules, gdk-pixbuf loaders such as the SVG one) are built against the host's GLib, so
+# bundled copies from the build runner shadowed them through LD_LIBRARY_PATH: on Debian testing, libgvfsdbus.so found
+# no g_variant_builder_init_static, libpixbufloader_svg.so no rsvg_handle_get_pixbuf_and_error, and the launcher
+# aborted in GTK. They came in through the distro's full FFmpeg (librsvg, cairo, pango...); the release links none.
+DESKTOP = re.compile(r"^lib(glib|gobject|gio|gmodule|gthread|girepository)-2\.0\.so|"
+                     r"^lib(gdk_pixbuf|gdk|gtk|rsvg|atk|atk-bridge|atspi|epoxy|glycin)[-_.]|"
+                     r"^lib(cairo|cairo-gobject|pango|pangocairo|pangoft2|harfbuzz|fontconfig|freetype|fribidi|thai|"
+                     r"datrie|graphite2|pixman)[-_.0-9]*\.so|"
+                     r"^lib(mount|blkid|uuid|selinux|pcre2-8|dbus-1|systemd)\.so")
 # Host ABI / graphics driver components must not be replaced by packaged copies. That includes what the GPU drivers
 # themselves link against: AppRun puts usr/lib first on LD_LIBRARY_PATH, so a bundled copy older than the host's (the
 # CI builds on Ubuntu 24.04) is what Mesa gets too. RADV then failed to load (libxcb-dri3: undefined symbol
@@ -30,7 +40,14 @@ ROOT = Path(__file__).resolve().parents[1]
 HOST = re.compile(r"^(ld-linux|lib(c|m|pthread|dl|rt|resolv|util|anl)\.so|libnss_|libvulkan\.so|"
                   r"lib(GL|EGL|GLX|OpenGL|GLdispatch|drm|gbm)[_.]|"
                   r"lib(stdc\+\+|gcc_s|z|expat|ffi|lzma|zstd|elf|udev|xshmfence)\.so|"
-                  r"lib(X11|X11-xcb|Xau|Xdmcp|Xext|Xfixes|Xrender|Xxf86vm|xcb|xcb-[a-z0-9]+|wayland-[a-z]+)\.so)")
+                  r"lib(X11|X11-xcb|Xau|Xdmcp|Xext|Xfixes|Xrender|Xxf86vm|xcb|xcb-[a-z0-9]+|wayland-[a-z]+)\.so)|" +
+                  DESKTOP.pattern)
+
+
+def linked(binary):
+    """Names of every shared library the binary loads (ldd: direct and indirect)."""
+    out = subprocess.run(['ldd', str(binary)], text=True, capture_output=True, check=True).stdout
+    return {Path(m[1]).name for m in re.finditer(r'^\s*(\S+)\s', out, re.M)}
 
 
 def dependencies(binary):
@@ -124,6 +141,11 @@ def main():
         else:
             print('note: no FSR 4 Lite component or assets (scripts/build_fsr4_linux.sh, tools/prepare_fsr4_lite.py): '
                   'packaged without it')
+        if a.release:  # (a shared package must not need the host's desktop stack: build FFmpeg minimal, #107)
+            desktop = sorted({f'{p.name}: {n}' for p in payloads for n in linked(p) if DESKTOP.match(n)})
+            if desktop:
+                raise SystemExit('release payloads link the GLib/GTK desktop stack (scripts/build_ffmpeg.sh):\n  ' +
+                                 '\n  '.join(desktop))
         for dep in {d for p in payloads for d in dependencies(p)}:
             target = lib / dep.name
             if target.exists() and target.read_bytes() != dep.read_bytes():

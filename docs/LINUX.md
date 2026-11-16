@@ -68,8 +68,9 @@ scripts/build_appimage_linux.sh       # build_linux.sh + tools/make_appimage.py 
 
 The AppImage contains the game code recompiled from **your** dump, so it is for your own use: do not share it
 (CONTRIBUTING.md, art. I). It bundles the launcher, the native FSR components when they were built (with their
-sources and licences) and the non-system libraries; GPU drivers, the Vulkan loader and glibc come from the host
-(build on the oldest distribution you want to run it on). Its mount is read-only, so `xcde.ini`, `cache/`, saves
+sources and licences) and the non-system libraries; GPU drivers, the Vulkan loader, glibc and the GLib/GTK desktop
+stack (GLib, GIO, gdk-pixbuf, librsvg, cairo, pango, libmount...) come from the host (build on the oldest
+distribution you want to run it on). Its mount is read-only, so `xcde.ini`, `cache/`, saves
 and logs live in `~/.local/share/monado` (or `MONADO_DATA_ROOT`, or a `monado-data` folder you create next to the
 AppImage to keep everything beside it; a `~/.local/share/lasrecomp` folder from older versions that holds `xcde.ini`
 keeps being used), which gets a `targets` link to the dump and a
