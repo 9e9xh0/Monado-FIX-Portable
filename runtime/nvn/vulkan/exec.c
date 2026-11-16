@@ -1443,6 +1443,7 @@ uint64_t renderer_present_count(void);
 void renderer_save_texture_tex(TexBackend *b, const char *path);
 static float pass_sx = 1, pass_sy = 1;
 static float vp_sx = 1, vp_sy = 1, vp_ox = 0, vp_oy = 0;
+static uint8_t vp_wide;  // [XCDE] GitHub #97: the current draw's ShaderKey.wide_ui (its viewport grows by that q)
 static float tex_sc[2][64][2];
 static uint8_t tex_d16[2][64];  // [XCDE] T243: the texture bound to the unit is D16 (rscale[1 + unit].z: the shader rounds a
 static bool ti_d16;             // compare reference to 16 bits, as Maxwell does); ti_d16: texture_info's last answer
@@ -1912,7 +1913,7 @@ static void begin_pass(void) {
     in_pass = true;
     if (oq_counting) oq_begin(cb);  // [XCDE] T139: this pass's samples count toward the open counter
     pass_dbg_rt = st.rt.ncolor && st.rt.color[0] ? (TexBackend *)st.rt.color[0]->backend : NULL;
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0; vp_wide = 0;
     stat_passes++;
 }
 
@@ -1930,6 +1931,11 @@ static VkRect2D scissor_rect(void) {
     pass_size(&w, &h);
     if (!w) return (VkRect2D){{0, 0}, {pass_w, pass_h}};
     int x = st.scissor[0][0], y = st.scissor[0][1], sw = st.scissor[0][2], sh = st.scissor[0][3];
+    // [XCDE] GitHub #97: a widened UI draw whose guest scissor is the whole target is not held to the 16:9 box
+    // (a smaller scissor - a scrolling list, a clipped panel - still maps into the box as before)
+    if (vp_wide && st.rt.ncolor && st.rt.color[0] && x <= 0 && y <= 0 &&
+        (int64_t)x + sw >= (int64_t)st.rt.color[0]->width && (int64_t)y + sh >= (int64_t)st.rt.color[0]->height)
+        return (VkRect2D){{0, 0}, {(uint32_t)(w < (int)pass_w ? w : (int)pass_w), (uint32_t)(h < (int)pass_h ? h : (int)pass_h)}};
     if (vp_sx != 1 || vp_sy != 1 || vp_ox != 0 || vp_oy != 0) {
         double x0 = floor(x * (double)vp_sx + vp_ox), y0 = floor(y * (double)vp_sy + vp_oy);
         double x1 = ceil(((double)x + sw) * vp_sx + vp_ox), y1 = ceil(((double)y + sh) * vp_sy + vp_oy);
@@ -2068,7 +2074,7 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
                   uint32_t smask) {
     begin_pass();
     VkCommandBuffer cb = vk_cmd();
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0; vp_wide = 0;
     VkRect2D rect = scissor_rect();
     if (!rect.extent.width || !rect.extent.height) return;
     if (index >= 0 && (index >= (int)pass_ncolor || pass_color[index] == VK_FORMAT_UNDEFINED)) return;
@@ -2511,8 +2517,9 @@ static Prog *get_program_(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     bool has_gs = (np->stage_mask & 4) && np->stages[2].code_addr;
     if (has_gs) {
         gkey.glsl = 1; gkey.flip_y = vkey->flip_y; gkey.flip_x = vkey->flip_x; gkey.depth_minus_one = vkey->depth_minus_one;
+        gkey.wide_ui = vkey->wide_ui;  // [XCDE] #97
         gkey.gs_in = g_draw_gs_in; gkey.tex_uint = stencil_unit_mask(2);
-        vk2.flip_y = vk2.flip_x = false; vk2.depth_minus_one = false;
+        vk2.flip_y = vk2.flip_x = false; vk2.depth_minus_one = false; vk2.wide_ui = 0;
         h ^= gkey.gs_in; h *= 0x100000001B3ull;
         for (int k = 0; k < 4; k++) { h ^= (gkey.tex_uint >> (k * 8)) & 0xFF; h *= 0x100000001B3ull; }
     }
@@ -6394,6 +6401,150 @@ static void draw_(CmdRec *r, bool indexed) {
     bool native = topology(mode, &topo, &cls);
     if (!native && mode != 6 && mode != 7 && mode != 9) { SKIPPED(); return; }
 
+    // [XCDE] GitHub #97: the fragment textures and the wide-box classification come before the pipeline (they were
+    // after the vertex set): a UI draw past the box needs the vertex variant that shrinks clip space (vkey.wide_ui).
+    g_draw_wide_remap = 0;
+    VkDescriptorImageInfo fii[64];
+    bool ui_box = false;
+    float box_u = 1, box_ox = 0, box_oy = 0;
+    uint8_t wide_ui = 0;
+    uint64_t prof_tx_ = prof ? SDL_GetTicksNS() : 0;
+    for (int i = 0; i < pr->fi->ntex && i < 64; i++) {
+        float sc[2]; uint32_t wh[2];
+        texture_info(1, pr->fi, i, &fii[i], sc, wh);
+        tex_sc[1][i][0] = sc[0]; tex_sc[1][i][1] = sc[1]; tex_wh[1][i][0] = wh[0]; tex_wh[1][i][1] = wh[1]; tex_d16[1][i] = ti_d16; tex_depth[1][i] = ti_depth;
+        tex_presented[1][i] = ti_presented; tex_alloc[1][i][0] = ti_alloc[0]; tex_alloc[1][i][1] = ti_alloc[1];
+    }
+    if (prof) prof_tex += SDL_GetTicksNS() - prof_tx_;
+    {   // static: [XCDE] test toggle - the old behaviour with XCDE_UI_STRETCH=1 (every draw fills the window, UI stretches)
+        static int ui_stretch = -1;
+        if (ui_stretch < 0) ui_stretch = getenv("XCDE_UI_STRETCH") != NULL;
+        if (!ui_stretch && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor &&
+            renderer_texture_presented(st.rt.color[0])) {
+        // Draws into the swapchain image (see renderer.m): composites fill the window, UI goes in a centred 16:9 box.
+        // [XCDE] GitHub #24/#22 feedback: the mapping must not vary per element - every non-fullscreen draw is a UI
+        // piece (the frosted panels sample the same blurred copy but stay UI pieces, as renderer.m says) and now all
+        // of them use the same centred box, so their positions keep the Switch's geometry on any aspect ratio.
+        bool scene_read = false;  // samples a reshaped texture the size of the framebuffer (the scene itself)
+        for (int i = 0; i < pr->fi->ntex && i < 64; i++)
+            if ((tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) && tex_wh[1][i][0] == st.rt.color[0]->width &&
+                tex_wh[1][i][1] == st.rt.color[0]->height)
+                scene_read = true;
+        bool fullscreen_quad = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+                               st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
+        // Only a full-target quad is allowed to fill the window; every other draw (panels, bars, menus) keeps the box.
+        bool reads_scene = fullscreen_quad && scene_read;
+        bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad;
+        if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
+        // [XCDE] V9: a full-target pass into the window that samples ANY scene-scaled texture is a composite of the scene
+        // even when none of its textures has exactly the window texture's size (post effects that read a smaller or
+        // differently sized copy of the scene). Before, such a pass was shrunk into the centred 16:9 box: black bars while
+        // the effect ran (e.g. while the camera moves).
+        bool v9_relaxed = false;
+        if (fullscreen_quad && !reads_scene && pr->fi->ntex > 1) {
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++)
+                if (tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) { reads_scene = true; v9_relaxed = true; break; }
+        }
+        static uint64_t wide_frame = ~0ull;
+        if (reads_scene) wide_frame = renderer_present_count();
+        bool fade_fill = false;
+        if (fullscreen_fill && st.ubuf[1][0].addr && st.ubuf[1][0].size >= 12) {
+            const float *c = (const float *)(uintptr_t)st.ubuf[1][0].addr;
+            bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
+            fade_fill = black || white;
+        }
+        bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
+        if (!composite) wide_frame = ~0ull;
+        // [XCDE] GitHub #97: menus keep the 16:9 box. Their decorations are drawn a little past the Switch's screen to
+        // look flush with its edge (the main menu's top-right rule, the selected item's tab) and would hang into the
+        // sides. A menu is open while its blurred scene backdrop (that shader as a composite) or its frame
+        // (ccc3653e158b51c9, from the first frame of the opening until the menu is gone) was drawn in the last few
+        // frames; neither is drawn in the field (XCDE_WIDE_FS_TRACE, Colony 9 / main menu / load screen).
+        static uint64_t menu_frame = ~0ull;
+        {
+            uint64_t h = st.program->stages[1].code_hash;
+            if ((composite && h == 0xb46dac89bce794eaull) || (!composite && h == 0xccc3653e158b51c9ull))
+                menu_frame = renderer_present_count();
+        }
+        bool menu_open = menu_frame != ~0ull && renderer_present_count() - menu_frame <= 4;
+        {   // [XCDE] #97 diagnostic (XCDE_WIDE_FS_TRACE=1): per frame, the window draws' fragment shaders (C composite,
+            // U UI), logged when the frame's set changes - which draws exist only while a menu is open
+            static int tr = -1;
+            if (tr < 0) tr = getenv("XCDE_WIDE_FS_TRACE") != NULL;
+            if (tr) {
+                static uint64_t fr = ~0ull, cur[96], prev_sig;
+                static int n;
+                static char kind[96];
+                uint64_t now = renderer_present_count();
+                if (now != fr) {
+                    uint64_t sig = 1469598103934665603ull;
+                    for (int i = 0; i < n; i++) { sig ^= cur[i] + kind[i]; sig *= 0x100000001B3ull; }
+                    if (n && sig != prev_sig) {
+                        prev_sig = sig;
+                        char line[96 * 20 + 64];
+                        int o = snprintf(line, sizeof line, "[wide-fs] frame %llu:", (unsigned long long)fr);
+                        for (int i = 0; i < n && o < (int)sizeof line - 20; i++)
+                            o += snprintf(line + o, sizeof line - o, " %c%016llx", kind[i], (unsigned long long)cur[i]);
+                        LOG("%s\n", line);
+                    }
+                    fr = now; n = 0;
+                }
+                uint64_t h = st.program->stages[1].code_hash;
+                char k = composite ? 'C' : 'U';
+                bool dup = false;
+                for (int i = 0; i < n; i++) if (cur[i] == h && kind[i] == k) { dup = true; break; }
+                if (!dup && n < 96) { cur[n] = h; kind[n] = k; n++; }
+            }
+        }
+        g_draw_wide_remap = !composite;  // [XCDE] frost fix: non-composite draws read the 16:9 box of the window texture
+        if ((v9_relaxed || (!composite && fullscreen_quad)) && !getenv("XCDE_NO_WIDE_LOG")) {
+            // [XCDE] V9 diagnostic ("[wide-box]" in last_game.log): one line per distinct fragment shader, at most 80
+            static uint64_t seen_fs[96];
+            static int nseen;
+            uint64_t fsh = st.program->stages[1].code_hash;
+            bool known = false;
+            for (int i = 0; i < nseen; i++) if (seen_fs[i] == fsh) { known = true; break; }
+            if (!known && nseen < 80) {
+                seen_fs[nseen++] = fsh;
+                LOG("[wide-box] %s: fs %016llx ntex %d rt %ux%u vp %.0f %.0f %.0f %.0f pass %.3f %.3f tex0 sc %.3f,%.3f wh %ux%u\n",
+                    v9_relaxed ? "now a composite (fills the window)" : "fullscreen quad kept in the 16:9 box",
+                    (unsigned long long)fsh, (int)pr->fi->ntex, (unsigned)st.rt.color[0]->width, (unsigned)st.rt.color[0]->height,
+                    (double)st.viewport[0][0], (double)st.viewport[0][1], (double)st.viewport[0][2], (double)st.viewport[0][3],
+                    (double)pass_sx, (double)pass_sy, (double)tex_sc[1][0][0], (double)tex_sc[1][0][1],
+                    (unsigned)tex_wh[1][0][0], (unsigned)tex_wh[1][0][1]);
+            }
+        }
+        if (!composite) {
+            int pw, ph;
+            pass_size(&pw, &ph);
+            float u = fminf(pass_sx, pass_sy);
+            ui_box = true; box_u = u;
+            box_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
+            box_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
+            // [XCDE] GitHub #97: the box viewport clipped whatever the game places past it (NPC speech bubbles, shop and
+            // quest icons over people at the sides of an ultrawide view). The viewport grows to the window instead and
+            // the vertex stage divides clip x (or y) by the same q (shader.h wide_ui): identical inside the box.
+            // XCDE_UI_CLIP_16x9=1 keeps the old clipping.
+            static int clip169 = -1;
+            if (clip169 < 0) clip169 = getenv("XCDE_UI_CLIP_16x9") != NULL;
+            double fx = (double)pw / (st.rt.color[0]->width * u), fy = (double)ph / (st.rt.color[0]->height * u);
+            bool along_y = fy > fx;
+            double f = along_y ? fy : fx;
+            if (!clip169 && !menu_open && f > 1.004) {
+                int n = (int)ceil((f - 1.0) * 32.0 - 1e-6);
+                if (n < 1) n = 1;
+                if (n <= 127) wide_ui = (uint8_t)(n | (along_y ? 0x80 : 0));
+            }
+        }
+        }  // (if !ui_stretch ...)
+    }
+    if (wide_ui) {  // [XCDE] #97: the draw's program with the widened clip-space epilogue (same textures and buffers)
+        ShaderKey wk = vkey;
+        wk.wide_ui = wide_ui;
+        Prog *wp = get_program(st.program, &wk, &fkey);
+        if (wp && wait_ready(&wp->state, wp)) { pr = wp; vkey = wk; }
+        else wide_ui = 0;  // (not built: this draw keeps the box, as before)
+    }
     uint64_t prof_tk_ = prof ? SDL_GetTicksNS() : 0;
     if (prof) prof_pre += prof_tk_ - prof_tp_;
     // ---- pipeline
@@ -6576,7 +6727,7 @@ static void draw_(CmdRec *r, bool indexed) {
     // ---- textures first (their scales feed the widescreen decision and the rscale table), then the viewport
     float *vp = st.viewport[0];
     float zn = st.depth_range[0][0], zf = st.depth_range[0][1];
-    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0; vp_wide = 0;
     float tint[8] = {0};
     // fragment textures are bound before deciding the viewport (tex_sc / tex_wh), rscale depends on the decision:
     // build the vertex set now and the fragment set after the decision (stage_set fills tex_sc for stage 1).
@@ -6598,83 +6749,11 @@ static void draw_(CmdRec *r, bool indexed) {
     PROF_T0();
     hr_decide(pr->fi);  // [XCDE] #96 half-res grid: before the vertex set (its constants are patched too)
     VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, NULL, NULL, 0, 0, 0, NULL);
-    g_draw_wide_remap = 0;  // [XCDE] frost fix: the wide-box classification below decides (fragment set is built after it)
     PROF_ADD(prof_sets);
-    VkDescriptorImageInfo fii[64];
-    uint64_t prof_tx_ = prof ? SDL_GetTicksNS() : 0;
-    for (int i = 0; i < pr->fi->ntex && i < 64; i++) {
-        float sc[2]; uint32_t wh[2];
-        texture_info(1, pr->fi, i, &fii[i], sc, wh);
-        tex_sc[1][i][0] = sc[0]; tex_sc[1][i][1] = sc[1]; tex_wh[1][i][0] = wh[0]; tex_wh[1][i][1] = wh[1]; tex_d16[1][i] = ti_d16; tex_depth[1][i] = ti_depth;
-        tex_presented[1][i] = ti_presented; tex_alloc[1][i][0] = ti_alloc[0]; tex_alloc[1][i][1] = ti_alloc[1];
-    }
-    if (prof) prof_tex += SDL_GetTicksNS() - prof_tx_;
-    {   // static: [XCDE] test toggle - the old behaviour with XCDE_UI_STRETCH=1 (every draw fills the window, UI stretches)
-        static int ui_stretch = -1;
-        if (ui_stretch < 0) ui_stretch = getenv("XCDE_UI_STRETCH") != NULL;
-        if (!ui_stretch && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor &&
-            renderer_texture_presented(st.rt.color[0])) {
-        // Draws into the swapchain image (see renderer.m): composites fill the window, UI goes in a centred 16:9 box.
-        // [XCDE] GitHub #24/#22 feedback: the mapping must not vary per element - every non-fullscreen draw is a UI
-        // piece (the frosted panels sample the same blurred copy but stay UI pieces, as renderer.m says) and now all
-        // of them use the same centred box, so their positions keep the Switch's geometry on any aspect ratio.
-        bool scene_read = false;  // samples a reshaped texture the size of the framebuffer (the scene itself)
-        for (int i = 0; i < pr->fi->ntex && i < 64; i++)
-            if ((tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) && tex_wh[1][i][0] == st.rt.color[0]->width &&
-                tex_wh[1][i][1] == st.rt.color[0]->height)
-                scene_read = true;
-        bool fullscreen_quad = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
-                               st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
-        // Only a full-target quad is allowed to fill the window; every other draw (panels, bars, menus) keeps the box.
-        bool reads_scene = fullscreen_quad && scene_read;
-        bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad;
-        if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
-        // [XCDE] V9: a full-target pass into the window that samples ANY scene-scaled texture is a composite of the scene
-        // even when none of its textures has exactly the window texture's size (post effects that read a smaller or
-        // differently sized copy of the scene). Before, such a pass was shrunk into the centred 16:9 box: black bars while
-        // the effect ran (e.g. while the camera moves).
-        bool v9_relaxed = false;
-        if (fullscreen_quad && !reads_scene && pr->fi->ntex > 1) {
-            for (int i = 0; i < pr->fi->ntex && i < 64; i++)
-                if (tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) { reads_scene = true; v9_relaxed = true; break; }
-        }
-        static uint64_t wide_frame = ~0ull;
-        if (reads_scene) wide_frame = renderer_present_count();
-        bool fade_fill = false;
-        if (fullscreen_fill && st.ubuf[1][0].addr && st.ubuf[1][0].size >= 12) {
-            const float *c = (const float *)(uintptr_t)st.ubuf[1][0].addr;
-            bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
-            fade_fill = black || white;
-        }
-        bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
-        if (!composite) wide_frame = ~0ull;
-        g_draw_wide_remap = !composite;  // [XCDE] frost fix: non-composite draws read the 16:9 box of the window texture
-        if ((v9_relaxed || (!composite && fullscreen_quad)) && !getenv("XCDE_NO_WIDE_LOG")) {
-            // [XCDE] V9 diagnostic ("[wide-box]" in last_game.log): one line per distinct fragment shader, at most 80
-            static uint64_t seen_fs[96];
-            static int nseen;
-            uint64_t fsh = st.program->stages[1].code_hash;
-            bool known = false;
-            for (int i = 0; i < nseen; i++) if (seen_fs[i] == fsh) { known = true; break; }
-            if (!known && nseen < 80) {
-                seen_fs[nseen++] = fsh;
-                LOG("[wide-box] %s: fs %016llx ntex %d rt %ux%u vp %.0f %.0f %.0f %.0f pass %.3f %.3f tex0 sc %.3f,%.3f wh %ux%u\n",
-                    v9_relaxed ? "now a composite (fills the window)" : "fullscreen quad kept in the 16:9 box",
-                    (unsigned long long)fsh, (int)pr->fi->ntex, (unsigned)st.rt.color[0]->width, (unsigned)st.rt.color[0]->height,
-                    (double)st.viewport[0][0], (double)st.viewport[0][1], (double)st.viewport[0][2], (double)st.viewport[0][3],
-                    (double)pass_sx, (double)pass_sy, (double)tex_sc[1][0][0], (double)tex_sc[1][0][1],
-                    (unsigned)tex_wh[1][0][0], (unsigned)tex_wh[1][0][1]);
-            }
-        }
-        if (!composite) {
-            int pw, ph;
-            pass_size(&pw, &ph);
-            float u = fminf(pass_sx, pass_sy);
-            vp_sx = vp_sy = u;
-            vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
-            vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
-        }
-        }  // (if !ui_stretch ...)
+    if (ui_box) {  // (classified before the pipeline: GitHub #97)
+        vp_sx = vp_sy = box_u;
+        vp_ox = box_ox; vp_oy = box_oy;
+        vp_wide = wide_ui;
     }
     float jx = 0, jy = 0;
     if (tmp_enabled()) tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
@@ -6705,7 +6784,13 @@ static void draw_(CmdRec *r, bool indexed) {
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
         float k = 1.0f;  // [XCDE] T186: (LAS widened camera-attached effects here; XCDE has none)
         float vx = vp[0] * vp_sx + vp_ox + jx, vw = vp[2] * vp_sx;
-        set_viewport(vx, vp[1] * vp_sy + vp_oy + jy, vw, vp[3] * vp_sy, zn, zf);
+        float vy = vp[1] * vp_sy + vp_oy + jy, vh = vp[3] * vp_sy;
+        if (vp_wide) {  // [XCDE] GitHub #97: grown by q around its centre; the vertex stage divides clip space by q
+            float q = (32.0f + (float)(vp_wide & 0x7F)) / 32.0f;
+            if (vp_wide & 0x80) { float c = vy + vh * 0.5f; vh *= q; vy = c - vh * 0.5f; }
+            else { float c = vx + vw * 0.5f; vw *= q; vx = c - vw * 0.5f; }
+        }
+        set_viewport(vx, vy, vw, vh, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
             LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
