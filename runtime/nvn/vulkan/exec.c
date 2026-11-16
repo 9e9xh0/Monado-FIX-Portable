@@ -4598,7 +4598,9 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         const float *f = (const float *)(uintptr_t)r.addr;
         g_mat_blue = (!r.size || r.size >= 48) && f[8] == 0.0f && f[9] == 0.0f && f[10] == 1.0f;
     }
-    if (g_hr.on && (stage == 0 || (stage == 1 && g_hr.vs_hit))) {  // [XCDE] #96 half-res grid (g_hr)
+    // [XCDE] #96 half-res grid (g_hr). Not on indexed buffers (bones, instance arrays): the grid row lives in the
+    // per-view block (row 5 in the lighting passes, row 0 in the composite)
+    if (g_hr.on && (stage == 0 || (stage == 1 && g_hr.vs_hit)) && !(si->cbuf_dynamic & (1u << k))) {
         uint64_t sz = size < 16 ? 16 : size, have = r.size && r.size < sz ? r.size : sz;
         VkSpan hs = hr_patch(stage, (const void *)(uintptr_t)r.addr, have, sz);
         if (hs.ptr) return ubo_span(hs, sz);
@@ -5607,6 +5609,7 @@ static bool hr_row(const float *f) {
 static VkSpan hr_patch(int stage, const void *src, uint64_t have, uint64_t size) {
     const float *f = (const float *)src;
     uint64_t rows = have / 16, r = 0;
+    if (rows > 64) rows = 64;  // (the first 1 KB: the scan runs for every draw that gathers a scaled texture)
     for (; r < rows; r++) if (hr_row(f + 4 * r)) break;
     if (r == rows) return (VkSpan){0};
     if (stage == 0) g_hr.vs_hit = true;
