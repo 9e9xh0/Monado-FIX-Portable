@@ -517,7 +517,18 @@ static const char *builtin_src(const char *name, int *stage) {
                "    mm = max(mm, max(e.r, max(e.g, e.b)));\n"
                "  }\n"
                "  float w = smoothstep(1.5 / 255.0, 0.03, mm);\n"
-               "  o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0);\n"
+               // [XCDE] GitHub #103: fin is the render-size image, whose scene part is JITTERED (exec.c moves the
+               // scene's viewport by the Halton offset; only the upscaler undoes it). Taking fin around the HUD
+               // (T220's one-texel ring, and the faint edges of the HUD) put a shaking low-resolution copy of the
+               // scene around every HUD element (FSR 3.1's sharp, steady output made it stand out). Now: (1) pixels
+               // the HUD did not change themselves stay the upscaled scene (the ring is gone); (2) under the faint
+               // HUD edges the scene is read where the jitter put it (pc.a.zw = this frame's jitter, render pixels):
+               // steady. Strong (opaque) HUD pixels still take fin as it is (T216). XCDE_TMP_HUD_OLD=1: as before.
+               "  float wo = smoothstep(1.5 / 255.0, 0.03, m);\n"
+               "  vec3 sd = texture(sceneTex, uv + pc.a.zw * rt).rgb;\n"
+               "  vec3 fs = clamp(mix(sd, texture(sceneTex, uv).rgb, wo) + d, 0.0, 1.0);\n"
+               "  bool old = pc.b.x != 0.0;\n"
+               "  o = vec4((old ? mm : m) > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), old ? fin : fs, w) : up, 1.0);\n"
                "}\n";
     }
     if (!strcmp(name, "post.vert")) {
