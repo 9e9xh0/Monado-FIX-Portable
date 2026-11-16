@@ -2502,6 +2502,9 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
 }
 static Prog *get_program_(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(np->stage_mask & 1)) return NULL;  // [XCDE] a program without a fragment stage gets an empty one (no_fs)
+    // [XCDE] #102: a vertex stage without code (the live object read while set_shaders refills it) went to the translator
+    // as a NULL blob: an access violation at 0x88. No program for that draw, as without a vertex stage.
+    if (!np->stages[0].code_addr || !nvn_stage_code(&np->stages[0])) return NULL;
     // [XCDE] T185: keyed by content only (T125 hashes), not by guest address - the same shaders streamed in again at
     // another address made new programs and pipelines (~10,000 program builds in 69 min of soak play, private memory
     // +0.8 GB/h). Translation reads only the code and the key, so equal content gives the same program.
@@ -4590,6 +4593,12 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         NvnShaderStage *ss = &st.program->stages[stage];
         uint64_t size = ss->const_size ? ss->const_size : 16;
         if (size < si->cbuf_size[1]) size = si->cbuf_size[1];
+        // [XCDE] #102 crash 1: the bound program's stage had no code (the live object emptied by set_shaders under us)
+        // while its translation reads c1: guest_copy(0 + 0) was memcpy from NULL. Zeros, as for an unbound buffer.
+        if (!ss->code_addr) {
+            if (size > sizeof zeros) size = sizeof zeros;
+            return ubo_span(vk_transient_copy(zeros, size, 256), size);
+        }
         return ubo_span(guest_copy(ss->code_addr + ss->const_offset, size), size);  // (constant: shared per submission)
     }
     int idx = k - 3;  // cbuf_base

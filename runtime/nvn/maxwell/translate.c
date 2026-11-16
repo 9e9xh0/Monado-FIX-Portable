@@ -2504,6 +2504,11 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     c->stage = stage;
     c->ipa_mode = -1;
     c->glsl = key && key->glsl;
+    if (!blob || max_size < (stage == STAGE_COMPUTE ? 8u : 0x88u)) {  // [XCDE] #102: no code (callers check info->msl)
+        snprintf(info->error, sizeof info->error, "no shader code (blob %p, size %zu)", (const void *)blob, max_size);
+        free(c);
+        return info;
+    }
     const uint8_t *sph = blob + 0x30;
     const uint8_t *code = blob + 0x80;
     // compute programs have neither the 0x30-byte NVN header nor an SPH: code starts at the blob

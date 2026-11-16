@@ -1097,11 +1097,13 @@ static KThread *thread_by_handle(uint32_t h) {
 
 const char *(*kernel_sym_hook)(uint64_t pc, uint64_t *offset);  // dispatch.c: names host frames in thread dumps
 void kernel_dump_threads(FILE *out) {
-    uint64_t now = plat_now_ns();
     // never block here: if the hang is on g_klock itself, dump without it (and say so)
     bool locked = false;
     for (int i = 0; i < 20 && !(locked = pthread_mutex_trylock(&g_klock) == 0); i++) plat_sleep_until_ns(plat_now_ns() + 50000000ull);
     if (!locked) fprintf(out, "[wd] WARNING g_klock is held by someone (dumping without it)\n");
+    // [XCDE] #102: read after the lock wait (up to 1 s) - a thread making an SVC meanwhile had last_svc_ns > now, and the
+    // unsigned "ms ago" wrapped to ~1.8e13, which also triggered the spin-loop backtrace below for a thread that was fine
+    uint64_t now = plat_now_ns();
     int nthreads = 0, nwait = 0;
     fprintf(out, "[wd] anchor kernel_dump_threads=%p (host frames: nm build/xcde.exe)\n", (void *)kernel_dump_threads);
     for (KThread *t = g_threads; t; t = t->anext) {
@@ -1110,6 +1112,8 @@ void kernel_dump_threads(FILE *out) {
                        : t->wait_kind == WAIT_ARBITER ? "arbiter" : t->in_sync_wait ? "syncwait" : "running";
         nwait += t->wait_kind != WAIT_NONE || t->in_sync_wait;
         uint32_t mval = ((t->wait_kind == WAIT_MUTEX || t->last_svc == 0x1a) && t->wait_addr) ? *(volatile uint32_t *)(uintptr_t)t->wait_addr : 0;
+        uint64_t svc_ns = t->last_svc_ns;  // (once: it changes under us; a stamp newer than now counts as now)
+        if (svc_ns > now) svc_ns = now;
         uint64_t off = 0;
         const char *sym = t->last_lr ? loader_symbol_at(t->last_lr, &off) : NULL;
         fprintf(out, "[wd] thread %llu h=%x prio %d entry %llx: %s%s wait_addr=%llx[%x] last_svc=%02x lr=%llx%s%s (%llu ms ago)\n",
@@ -1117,9 +1121,9 @@ void kernel_dump_threads(FILE *out) {
                 !g_det ? "" : t->det_state == 1 ? " [det:runnable]" : t->det_state == 2 ? " [det:BATON]" : t->det_state == 3 ? " [det:blocked]" : " [det:-]",
                 (unsigned long long)t->wait_addr, mval,
                 t->last_svc, (unsigned long long)t->last_lr, sym ? " in " : "", sym ? sym : "",
-                t->last_svc_ns ? (unsigned long long)((now - t->last_svc_ns) / 1000000) : 0ull);
+                svc_ns ? (unsigned long long)((now - svc_ns) / 1000000) : 0ull);
         // [XCDE] T122: a thread running with no SVC for over a second: where its host thread is (spin loops)
-        if (!t->finished && t->wait_kind == WAIT_NONE && !t->in_sync_wait && t->last_svc_ns && now - t->last_svc_ns > 1000000000ull) {
+        if (!t->finished && t->wait_kind == WAIT_NONE && !t->in_sync_wait && svc_ns && now - svc_ns > 1000000000ull) {
             uint64_t pcs[32];
             int n = plat_thread_backtrace(&t->host, pcs, 32);
             for (int k = 0; k < n; k++) {
