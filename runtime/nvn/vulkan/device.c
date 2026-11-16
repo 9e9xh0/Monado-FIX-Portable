@@ -885,6 +885,12 @@ static volatile bool sc_dirty;  // [XCDE] the F1 menu changed V-Sync: a new swap
 void vk_request_swapchain_recreate(void) { sc_dirty = true; }
 bool vk_frame_begin(const float clear[4]) {
     cur_frame.ok = false;
+    {   // [XCDE] live FPS option (F1): crossing 60 changes the V-Sync present mode (FIFO only at 30 / 60)
+        static int band = -1;
+        int b = g_settings.fps > 0 && g_settings.fps <= 60;
+        if (band >= 0 && b != band && g_settings.vsync) sc_dirty = true;
+        band = b;
+    }
     if (sc_dirty && g_vk.swapchain) { sc_dirty = false; recreate_swapchain(); }
     int w, h;
     SDL_GetWindowSizeInPixels(window, &w, &h);

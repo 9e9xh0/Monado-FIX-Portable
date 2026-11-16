@@ -112,18 +112,34 @@ bool xcde_cutscene_30(void) { return g_cut30; }
 // the frame rate the window is presented at (device.c repeat presents): 30 while a cutscene is held at 30
 int xcde_present_fps(void) { return g_cut30 ? 30 : g_settings.fps; }
 
+// [XCDE] live: the FPS option is read every frame (F1 menu changes apply without a restart). Back to 30 the game's
+// interval and limiter constant are handed back (interval 2, the original constant) and the game chooses again.
+static float fps_limiter_original;
+static bool fps_limiter_saved;
 static void fps_interval_force(void) {
-    static int want = -2;
+    static int want = -2, fps_was = -1;
     static float scale = -1;
     static uint64_t after, after_frames, frames;
     if (want == -2) {
-        int fps = g_settings.fps;
+        const char *e = ENV("XCDE_FPS_AFTER_S"); after = xcde_frame_now_ns() + (e ? (uint64_t)(atof(e) * 1e9) : 0);
+        e = ENV("XCDE_FPS_AFTER_FRAMES"); after_frames = e ? strtoull(e, NULL, 10) : 0;
+    }
+    int fps = g_settings.fps;
+    if (want == -2 || fps != fps_was) {
+        bool first = want == -2;
+        int was_want = want;
         const char *e = ENV("XCDE_FPS_INTERVAL");
         want = e ? atoi(e) : fps == 30 ? -1 : 1;
         e = ENV("XCDE_FPS_PERIOD_SCALE");
         scale = e ? (float)atof(e) : fps == 0 ? 0.02f : fps > 60 ? 60.0f / (float)fps : 0;
-        e = ENV("XCDE_FPS_AFTER_S"); after = xcde_frame_now_ns() + (e ? (uint64_t)(atof(e) * 1e9) : 0);
-        e = ENV("XCDE_FPS_AFTER_FRAMES"); after_frames = e ? strtoull(e, NULL, 10) : 0;
+        if (!first) {
+            LOG("[fps] FPS option %d -> %d (live)\n", fps_was, fps);
+            uint32_t *p = (uint32_t *)(uintptr_t)*(volatile uint64_t *)(uintptr_t)0x7000b92ea0ull;
+            if (want < 0 && was_want >= 0 && p) *p = 2;  // (the game's own 30 fps mode; it picks again from here)
+            if (scale <= 0 && fps_limiter_saved)
+                *(volatile float *)(uintptr_t)0x70009d3dccull = fps_limiter_original;
+        }
+        fps_was = fps;
     }
     frames++;
     g_cut30 = g_settings.cutscene_mode && !ENV("XCDE_FPS_INTERVAL") && xcde_in_cutscene();
@@ -144,14 +160,12 @@ static void fps_interval_force(void) {
     *p = (uint32_t)target_interval;
     if (scale > 0) {
         volatile float *k = (volatile float *)(uintptr_t)0x70009d3dccull;
-        static int done;
-        static float original;
-        if (!done) {
-            done = 1;
-            original = *k;
+        if (!fps_limiter_saved) {
+            fps_limiter_saved = true;
+            fps_limiter_original = *k;
             plat_protect((uint64_t)(uintptr_t)k & ~0xFFFull, 0x1000, PLAT_PROT_RW);
         }
-        float desired = original * (g_cut30 ? 1.0f : scale);
+        float desired = fps_limiter_original * (g_cut30 ? 1.0f : scale);
         if (*k != desired) { *k = desired; LOG("[fps] limiter period %g (interval %d)\n", (double)*k, target_interval); }
     }
 }
