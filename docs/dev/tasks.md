@@ -1425,3 +1425,19 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   Pendiente: la corrupción de modelos/texturas de #25 (distinta del parpadeo) es la carrera del worker asíncrono;
   `session_fix` la evita pero cuesta 20-30 fps y más con el tiempo. No se reescribe el worker a ciegas. En sesión
   larga hay que confirmar que ya no sale "pipeline cache not saved" y que el presupuesto impreso es el nuevo.
+- [ ] T265 **#96 (halos / sombras que parpadean): `rgather` en texturas de profundidad.** Captura del reportero
+  (`pixelationgrass.rdc`, 4K, bilinear: sin jitter ni RCAS): halos en el contorno del personaje y de cada brizna de
+  hierba, y sombras que parpadean, con cualquier escalador. Causa: el downsample de profundidad 4K -> media resolución
+  (EID 12718: gather de la D32S8 4K -> R32F 1920x1080) pasa por `rgather`, que muestrea los centros de los texeles de
+  invitado (720p) en lugar del 2x2 físico propio del píxel; en la captura, la profundidad a media resolución repite
+  exactamente cada tercera columna y fila (100 % frente a ~5 %) y sus bordes quedan hasta ~3 px fuera de la silueta 4K.
+  Todo lo que la compara con la profundidad 4K (máscara de sombra a media resolución 14311, SSAO, el upsample con bordes
+  de la iluminación 14552-14568) elige el lado equivocado en los bordes, y al moverse el error salta a pasos de 720p.
+  Arreglo: `exec.c` marca las texturas de formato profundidad en `rscale[1 + unidad].w`; `rgather` (que ahora recibe la
+  fila entera) hace el `textureGather` normal cuando está marcada. Los gathers de color (tramas / máscaras de T-rocas,
+  y el R32F de media resolución que la iluminación pondera con los pesos 640x360 del juego) quedan como estaban.
+  `XCDE_RGATHER_DEPTH=1` devuelve el comportamiento anterior sin recompilar shaders (A/B). Test nativo:
+  `test_translate_tex.c` `test_scaled_gather_takes_the_depth_flag`; GLSL generado validado con glslangValidator;
+  `exec.c` compila. No ejecutado aquí: sin partida - los shaders con `rgather` se recompilan solos (caché SPIR-V por hash).
+  Hecho cuando: el reportero confirma que los halos y el parpadeo desaparecen a 4K, `XCDE_RGATHER_DEPTH=1` los devuelve,
+  y la rejilla de rocas de `aa8646f` no vuelve.

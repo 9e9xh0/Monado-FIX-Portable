@@ -1440,6 +1440,8 @@ static float vp_sx = 1, vp_sy = 1, vp_ox = 0, vp_oy = 0;
 static float tex_sc[2][64][2];
 static uint8_t tex_d16[2][64];  // [XCDE] T243: the texture bound to the unit is D16 (rscale[1 + unit].z: the shader rounds a
 static bool ti_d16;             // compare reference to 16 bits, as Maxwell does); ti_d16: texture_info's last answer
+static uint8_t tex_depth[2][64];  // [XCDE] #96: the texture bound to the unit is a depth format (rscale[1 + unit].w:
+static bool ti_depth;             // rgather reads its own physical 2x2, not guest texel centres); texture_info's answer
 static uint32_t tex_wh[2][64][2];
 static bool tex_presented[2][64];      // [XCDE] frost fix: the unit's texture is the presented (widened) window texture
 static uint32_t tex_alloc[2][64][2];   // and its (backend) allocation size, for the centred 16:9 box map
@@ -5421,6 +5423,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
     sc[0] = sc[1] = 1;
     wh[0] = wh[1] = 0;
     ti_d16 = false;
+    ti_depth = false;
     ti_presented = false;
     ti_alloc[0] = ti_alloc[1] = 0;
     if (h && st.tpool && tic < (uint32_t)st.tpool->count) {
@@ -5465,6 +5468,11 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             renderer_texture_scale(e->tex, &sc[0], &sc[1]);
             wh[0] = e->tex->width; wh[1] = e->tex->height;
             ti_d16 = e->tex->format == 0x32;
+            {   // [XCDE] #96: XCDE_RGATHER_DEPTH=1 keeps the guest-texel gather on depth textures too (the old behaviour)
+                static int guest = -1;
+                if (guest < 0) { const char *g = getenv("XCDE_RGATHER_DEPTH"); guest = g && *g == '1'; }
+                ti_depth = !guest && renderer_format_is_depth(e->tex->format);
+            }
             TexBackend *tb = (TexBackend *)e->tex->backend;
             ti_presented = tb && tb->presented;
             ti_alloc[0] = tb ? tb->width : 0;
@@ -5576,8 +5584,8 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             int ti = (int)b->binding - 32;
             float sc[2]; uint32_t wh[2];
             if (ti < si->ntex && pre_ii && ti < 64) { ii[n] = pre_ii[ti]; sc[0] = tex_sc[sg][ti][0]; sc[1] = tex_sc[sg][ti][1]; wh[0] = tex_wh[sg][ti][0]; wh[1] = tex_wh[sg][ti][1]; }
-            else if (ti < si->ntex) { texture_info(stage, si, ti, &ii[n], sc, wh); if (ti < 64) { tex_d16[sg][ti] = ti_d16; tex_presented[sg][ti] = ti_presented; tex_alloc[sg][ti][0] = ti_alloc[0]; tex_alloc[sg][ti][1] = ti_alloc[1]; } }
-            else { ii[n] = (VkDescriptorImageInfo){vk_default_sampler(true), vk_dummy_view(TEXTYPE_2D), VK_IMAGE_LAYOUT_GENERAL}; sc[0] = sc[1] = 1; wh[0] = wh[1] = 0; if (ti < 64) { tex_d16[sg][ti] = 0; tex_presented[sg][ti] = 0; } }
+            else if (ti < si->ntex) { texture_info(stage, si, ti, &ii[n], sc, wh); if (ti < 64) { tex_d16[sg][ti] = ti_d16; tex_depth[sg][ti] = ti_depth; tex_presented[sg][ti] = ti_presented; tex_alloc[sg][ti][0] = ti_alloc[0]; tex_alloc[sg][ti][1] = ti_alloc[1]; } }
+            else { ii[n] = (VkDescriptorImageInfo){vk_default_sampler(true), vk_dummy_view(TEXTYPE_2D), VK_IMAGE_LAYOUT_GENERAL}; sc[0] = sc[1] = 1; wh[0] = wh[1] = 0; if (ti < 64) { tex_d16[sg][ti] = 0; tex_depth[sg][ti] = 0; tex_presented[sg][ti] = 0; } }
             if (ti < 64) {
                 tex_sc[sg][ti][0] = sc[0]; tex_sc[sg][ti][1] = sc[1];
                 tex_wh[sg][ti][0] = wh[0]; tex_wh[sg][ti][1] = wh[1];
@@ -5588,7 +5596,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             float sc[2] = {1, 1};
             ii[n] = (VkDescriptorImageInfo){VK_NULL_HANDLE, ti < si->ntex ? storage_view_for(stage, si, ti, sc) : vk_dummy_storage_view(),
                                             VK_IMAGE_LAYOUT_GENERAL};
-            if (ti < 64) { tex_sc[sg][ti][0] = sc[0]; tex_sc[sg][ti][1] = sc[1]; tex_d16[sg][ti] = 0; tex_presented[sg][ti] = 0; }  // [XCDE] T178
+            if (ti < 64) { tex_sc[sg][ti][0] = sc[0]; tex_sc[sg][ti][1] = sc[1]; tex_d16[sg][ti] = 0; tex_depth[sg][ti] = 0; tex_presented[sg][ti] = 0; }  // [XCDE] T178
             w[n].pImageInfo = &ii[n];
         } else if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER && b->binding < 17) {
             bi[n] = cbuf_info(stage, si, (int)b->binding, gx, gy, gz);
@@ -5617,6 +5625,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
             for (int t = 0; t < si->ntex && t < 64; t++) {
                 rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; rs[1 + t][2] = tex_d16[sg][t];
+                rs[1 + t][3] = tex_depth[sg][t];  // [XCDE] #96: rgather's depth flag
                 // [XCDE] GitHub #24 frost zoom: a non-composite draw sampling the widened presented window texture reads
                 // the centred 16:9 box, not the whole allocation (uvb in the shader: uv * rs.xy + rs.zw, no-op when 0).
                 if (stage == 1 && g_draw_wide_remap && tex_presented[sg][t] &&
@@ -6517,7 +6526,7 @@ static void draw_(CmdRec *r, bool indexed) {
     for (int i = 0; i < pr->fi->ntex && i < 64; i++) {
         float sc[2]; uint32_t wh[2];
         texture_info(1, pr->fi, i, &fii[i], sc, wh);
-        tex_sc[1][i][0] = sc[0]; tex_sc[1][i][1] = sc[1]; tex_wh[1][i][0] = wh[0]; tex_wh[1][i][1] = wh[1]; tex_d16[1][i] = ti_d16;
+        tex_sc[1][i][0] = sc[0]; tex_sc[1][i][1] = sc[1]; tex_wh[1][i][0] = wh[0]; tex_wh[1][i][1] = wh[1]; tex_d16[1][i] = ti_d16; tex_depth[1][i] = ti_depth;
         tex_presented[1][i] = ti_presented; tex_alloc[1][i][0] = ti_alloc[0]; tex_alloc[1][i][1] = ti_alloc[1];
     }
     if (prof) prof_tex += SDL_GetTicksNS() - prof_tx_;

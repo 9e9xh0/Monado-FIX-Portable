@@ -905,6 +905,11 @@ static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
 // then drift against the screen and draw a fixed grid over rocks and background. rgather (scaled_gather.h) samples the
 // centres of the four scaled guest texels, keeping gather's component order; unscaled textures use textureGather.
 // Fragment stage, non-integer, non-shadow 2D gathers without offsets only. XCDE_SCALED_GATHER=0: as before.
+// [XCDE] #96: not on depth textures (rscale[1 + unit].w, set by exec.c): there the game gathers a pixel's own 2x2 to
+// reduce depth to half resolution (XCDE's 12718-class downsample), and the guest-centre samples built a half-res depth
+// that repeats every third row / column and sits up to ~3 px off the 4K silhouettes - halos around characters and
+// grass in every depth-aware half-res effect (shadow mask, SSAO, the lighting's upsample), flicker when they move.
+// A plain gather at a scaled half-res pixel's own uv is exactly its 2x2 footprint. XCDE_RGATHER_DEPTH=1: as before.
 static bool scaled_gather(Ctx *c, int slot) {
     static int on = -1;
     if (on < 0) { const char *e = getenv("XCDE_SCALED_GATHER"); on = !e || atoi(e) != 0; }
@@ -933,7 +938,7 @@ static void emit_tld4s(Ctx *c, uint64_t w) {
     } else
         sprintf(call, "textureGather(t%d, vec2(as_type<float>(%s), as_type<float>(%s)), %d)", slot, A, Bv, comp);
     if (scaled_gather(c, slot))
-        sprintf(call, "rgather(t%d, vec2(as_type<float>(%s), as_type<float>(%s)), rscale[%d].xy, %d)", slot, A, Bv, slot + 1, comp);
+        sprintf(call, "rgather(t%d, vec2(as_type<float>(%s), as_type<float>(%s)), rscale[%d], %d)", slot, A, Bv, slot + 1, comp);
     write_tex_result(c, slot, call, 0xF, d0, d1, true, f16);
 }
 
@@ -979,7 +984,7 @@ static void emit_tld4(Ctx *c, uint64_t w) {
     if (dc) sprintf(call, "vec4(textureGather(t%d, %s, %s))", slot, uv, dref);
     else sprintf(call, "textureGather(t%d, %s, %d)", slot, uv, comp);
     if (!dc && offmode == 0 && scaled_gather(c, slot))
-        sprintf(call, "rgather(t%d, %s, rscale[%d].xy, %d)", slot, uv, slot + 1, comp);
+        sprintf(call, "rgather(t%d, %s, rscale[%d], %d)", slot, uv, slot + 1, comp);
     write_tex_result(c, slot, call, mask, d, RZ, false, false);
 }
 

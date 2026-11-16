@@ -236,6 +236,24 @@ static void test_fetch_reads_own_scaled_pixel(void) {
     if (m) maxwell_free(m);
 }
 
+// #96: rgather gets the whole rscale row (xy the scale, w the depth flag exec.c sets) and falls back to the plain
+// gather on depth textures, so a half-res depth downsample reads its own physical 2x2.
+static void test_scaled_gather_takes_the_depth_flag(void) {
+    ShaderInfo *s = translate(tld4s(0, 8, 9, 4, 3, 0, 0, 0, 0, 0));
+    CHECK(s && s->msl);
+    if (!s || !s->msl) { if (s) maxwell_free(s); return; }
+    CHECK(strstr(s->msl, "rgather(t0, vec2(") != NULL);
+    CHECK(strstr(s->msl, "rscale[1], 0)") != NULL);
+    CHECK(strstr(s->msl, "rscale[1].xy, 0)") == NULL);
+    CHECK(strstr(s->msl, "vec4 rgather(sampler2D t, vec2 uv, vec4 s, int component)") != NULL);
+    CHECK(strstr(s->msl, "s.w > 0.5") != NULL);
+    maxwell_free(s);
+    ShaderInfo *f = translate(tld4(0, 34, 8, 22, 1, 0, 0, 1, 15));
+    CHECK(f && f->msl);
+    if (f && f->msl) CHECK(strstr(f->msl, "rscale[1], 1)") != NULL);
+    if (f) maxwell_free(f);
+}
+
 int main(void) {
     test_fetch_reads_own_scaled_pixel();
     test_gather_components();
@@ -247,6 +265,7 @@ int main(void) {
     test_tld4_mask_selects_components();
     test_tld4_offsets_and_ptp();
     test_tld4_depth_compare();
+    test_scaled_gather_takes_the_depth_flag();
     test_tld4_rejects_3d_and_tex_is_untouched();
     test_suld_loads_through_a_storage_image();
     test_suld_p_mode_uses_the_component_mask();
