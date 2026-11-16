@@ -247,6 +247,7 @@ static void test_scaled_gather_takes_the_depth_flag(void) {
     CHECK(strstr(s->msl, "rscale[1].xy, 0)") == NULL);
     CHECK(strstr(s->msl, "vec4 rgather(sampler2D t, vec2 uv, vec4 s, int component)") != NULL);
     CHECK(strstr(s->msl, "s.w > 0.5") != NULL);
+    CHECK(s->tex[0].scaled_gather);  // (exec.c's half-res grid patch keys on it)
     maxwell_free(s);
     ShaderInfo *f = translate(tld4(0, 34, 8, 22, 1, 0, 0, 1, 15));
     CHECK(f && f->msl);

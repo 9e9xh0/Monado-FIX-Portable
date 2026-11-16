@@ -1442,6 +1442,17 @@ static uint8_t tex_d16[2][64];  // [XCDE] T243: the texture bound to the unit is
 static bool ti_d16;             // compare reference to 16 bits, as Maxwell does); ti_d16: texture_info's last answer
 static uint8_t tex_depth[2][64];  // [XCDE] #96: the texture bound to the unit is a depth format (rscale[1 + unit].w:
 static bool ti_depth;             // rgather reads its own physical 2x2, not guest texel centres); texture_info's answer
+// [XCDE] #96 half-res grid: this draw's fragment shader gathers a scaled half-res texture (guest w x h, scale sx, sy).
+// The game's nearest-depth upsample works in that texture's guest texels: the vertex shader passes uv * (w, h), the
+// fragment shader floors it, gathers the cell's four depths and samples the half-res buffers at (cell + offset) /
+// (w, h). Scaled, every choice covers a whole guest cell (6x6 px at 4K): blocky, flickering outlines wherever an
+// object meets shadow (lighting passes, the half-res composite). For such a draw, constant rows (w, h, 1/w, 1/h) in
+// the vertex / fragment buffers are given the texture's physical size and its gather reads physical texels, so the
+// pass runs as if the game's half resolution were the scaled one. Only when the VERTEX constants hold that row (the
+// uv * (w, h) varying): the depth downsample also gathers a scaled half-res texture and has no grid to move.
+// XCDE_HALFRES_GRID=0: off.
+static struct { bool on, vs_hit; uint32_t w, h; float sx, sy; } g_hr;
+static VkSpan hr_patch(int stage, const void *src, uint64_t have, uint64_t size);
 static uint32_t tex_wh[2][64][2];
 static bool tex_presented[2][64];      // [XCDE] frost fix: the unit's texture is the presented (widened) window texture
 static uint32_t tex_alloc[2][64][2];   // and its (backend) allocation size, for the centred 16:9 box map
@@ -4587,6 +4598,11 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         const float *f = (const float *)(uintptr_t)r.addr;
         g_mat_blue = (!r.size || r.size >= 48) && f[8] == 0.0f && f[9] == 0.0f && f[10] == 1.0f;
     }
+    if (g_hr.on && (stage == 0 || (stage == 1 && g_hr.vs_hit))) {  // [XCDE] #96 half-res grid (g_hr)
+        uint64_t sz = size < 16 ? 16 : size, have = r.size && r.size < sz ? r.size : sz;
+        VkSpan hs = hr_patch(stage, (const void *)(uintptr_t)r.addr, have, sz);
+        if (hs.ptr) return ubo_span(hs, sz);
+    }
     if (size > r.size && r.size) {
         // [XCDE] T126: the shader may read past the range the game bound. Maxwell returns 0 there; a shorter Vulkan
         // range only promises "some value of the buffer" (robustBufferAccess): leftovers of the transient ring
@@ -5565,6 +5581,49 @@ static VkImageView storage_view_for(int stage, ShaderInfo *si, int i, float sc[2
 // viewport decision), or NULL.
 static float g_mirror_w;  // mirror mode's composite: its render target width (rscale[65].x; 0 otherwise)
 
+static void hr_decide(ShaderInfo *fi) {
+    static int off = -1;
+    if (off < 0) { const char *e = getenv("XCDE_HALFRES_GRID"); off = e && *e == '0'; }
+    g_hr.on = g_hr.vs_hit = false;
+    if (off || !fi) return;
+    for (int i = 0; i < fi->ntex && i < 64; i++) {
+        if (!fi->tex[i].scaled_gather) continue;
+        VkDescriptorImageInfo ii; float sc[2]; uint32_t wh[2];
+        texture_info(1, fi, i, &ii, sc, wh);
+        if ((sc[0] != 1 || sc[1] != 1) && wh[0] > 1 && wh[1] > 1 && !ti_depth) {
+            g_hr.on = true; g_hr.w = wh[0]; g_hr.h = wh[1]; g_hr.sx = sc[0]; g_hr.sy = sc[1];
+            return;
+        }
+    }
+}
+
+// [XCDE] #96: a constant row is the half-res grid (w, h, 1/w, 1/h) of this draw's gathered texture
+static bool hr_row(const float *f) {
+    return f[0] == (float)g_hr.w && f[1] == (float)g_hr.h && fabsf(f[2] * (float)g_hr.w - 1.0f) < 1e-5f &&
+           fabsf(f[3] * (float)g_hr.h - 1.0f) < 1e-5f;
+}
+
+// [XCDE] #96: a copy of the buffer with its half-res grid rows scaled, or a null span when it has none
+static VkSpan hr_patch(int stage, const void *src, uint64_t have, uint64_t size) {
+    const float *f = (const float *)src;
+    uint64_t rows = have / 16, r = 0;
+    for (; r < rows; r++) if (hr_row(f + 4 * r)) break;
+    if (r == rows) return (VkSpan){0};
+    if (stage == 0) g_hr.vs_hit = true;
+    VkSpan s = vk_transient(size, 256);
+    memcpy(s.ptr, src, have);
+    if (size > have) memset((uint8_t *)s.ptr + have, 0, size - have);
+    float *d = (float *)s.ptr, W = (float)g_hr.w * g_hr.sx, H = (float)g_hr.h * g_hr.sy;
+    for (; r < rows; r++)
+        if (hr_row(d + 4 * r)) { d[4 * r] = W; d[4 * r + 1] = H; d[4 * r + 2] = 1.0f / W; d[4 * r + 3] = 1.0f / H; }
+    static int nlog;
+    if (nlog < 8 && getenv("XCDE_TRACE_HALFRES")) {
+        nlog++;
+        LOG("[halfres] fs %016llx: grid %ux%u -> %gx%g\n", (unsigned long long)g_cur_fs_hash, g_hr.w, g_hr.h, W, H);
+    }
+    return s;
+}
+
 static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t set, int stage, ShaderInfo *si, const float *rscale_row0,
                                  const float tint[8], uint32_t gx, uint32_t gy, uint32_t gz, const VkDescriptorImageInfo *pre_ii) {
     VkDescriptorSet ds = VK_NULL_HANDLE; // T260: allocate only after an exact-value cache miss
@@ -5626,6 +5685,9 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             for (int t = 0; t < si->ntex && t < 64; t++) {
                 rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; rs[1 + t][2] = tex_d16[sg][t];
                 rs[1 + t][3] = tex_depth[sg][t];  // [XCDE] #96: rgather's depth flag
+                if (stage == 1 && g_hr.on && g_hr.vs_hit && si->tex[t].scaled_gather && tex_wh[sg][t][0] == g_hr.w &&
+                    tex_wh[sg][t][1] == g_hr.h && tex_sc[sg][t][0] == g_hr.sx && tex_sc[sg][t][1] == g_hr.sy)
+                    rs[1 + t][3] = 1;  // (the half-res grid now runs at its physical size: its own texels)
                 // [XCDE] GitHub #24 frost zoom: a non-composite draw sampling the widened presented window texture reads
                 // the centred 16:9 box, not the whole allocation (uvb in the shader: uv * rs.xy + rs.zw, no-op when 0).
                 if (stage == 1 && g_draw_wide_remap && tex_presented[sg][t] &&
@@ -6518,6 +6580,7 @@ static void draw_(CmdRec *r, bool indexed) {
                                (unsigned long long)at, (unsigned long long)bytes, xcount, xinst, vkey.xfb_stride);
     }
     PROF_T0();
+    hr_decide(pr->fi);  // [XCDE] #96 half-res grid: before the vertex set (its constants are patched too)
     VkDescriptorSet vset = stage_set(pr, pr->set_layout[0], 0, 0, pr->vi, NULL, NULL, 0, 0, 0, NULL);
     g_draw_wide_remap = 0;  // [XCDE] frost fix: the wide-box classification below decides (fragment set is built after it)
     PROF_ADD(prof_sets);

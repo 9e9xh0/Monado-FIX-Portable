@@ -1441,3 +1441,19 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   `exec.c` compila. No ejecutado aquí: sin partida - los shaders con `rgather` se recompilan solos (caché SPIR-V por hash).
   Hecho cuando: el reportero confirma que los halos y el parpadeo desaparecen a 4K, `XCDE_RGATHER_DEPTH=1` los devuelve,
   y la rejilla de rocas de `aa8646f` no vuelve.
+- [ ] T266 **#96 (bordes en bloques sobre la sombra): la rejilla del upsample a media resolución.** Tras T265 el
+  reportero sigue viendo bloques grandes y parpadeo donde un objeto (hierba, pies, cabeza) tapa la sombra; con
+  `shadow_mask = full` también. Causa (misma captura): el upsample por profundidad más cercana de las pasadas de
+  iluminación (14552-14568) y del compuesto a media resolución (15838) trabaja en texeles de invitado de la textura a
+  media resolución: el vertex shader pasa `uv * cb3[5].xy` (640, 360), el fragment hace `floor`, recoge las cuatro
+  profundidades de esa celda (`rgather`) y muestrea todas las entradas a media resolución (máscara de sombra, la
+  iluminación a media resolución de 14243...) en `(celda + desplazamiento) * cb3[5].zw` (1/640, 1/360). Escalado, cada
+  decisión cubre una celda entera (6x6 px a 4K); por eso `shadow_mask = full` no basta (sólo cambia una de las
+  entradas). Arreglo (`exec.c`): si el fragment shader de un draw hace `rgather` sobre una textura escalada de tamaño
+  de invitado w x h, y las constantes del VERTEX shader contienen la fila `(w, h, 1/w, 1/h)`, esa fila se reescribe con
+  el tamaño físico en las constantes de vértice y fragmento de ese draw (copia propia, la memoria del juego no cambia) y
+  ese gather lee texeles físicos: la pasada corre como si la media resolución del juego fuera la escalada. El
+  downsample de profundidad (12718) no tiene esa fila y no se toca. `XCDE_HALFRES_GRID=0`: desactivado;
+  `XCDE_TRACE_HALFRES=1`: registra los draws parcheados. Test nativo: `ShaderTexture.scaled_gather`; `exec.c` compila.
+  No ejecutado aquí. Hecho cuando: el reportero confirma los bordes limpios a 4K (hierba, pies, cabeza) y
+  `XCDE_HALFRES_GRID=0` los devuelve.

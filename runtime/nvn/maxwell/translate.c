@@ -916,6 +916,7 @@ static bool scaled_gather(Ctx *c, int slot) {
     if (!on || !c->glsl || c->stage != STAGE_FRAGMENT || c->info->tex[slot].is_uint || c->info->tex[slot].shadow)
         return false;
     c->uses_rscale = c->uses_scaled_gather = true;
+    c->info->tex[slot].scaled_gather = true;
     return true;
 }
 
