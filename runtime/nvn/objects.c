@@ -728,6 +728,14 @@ static const NvnProgram *program_freeze(const NvnProgram *p) {
         }
     }
     pthread_mutex_unlock(&snap_lock);
+    if (!r && (r = malloc(sizeof q))) {
+        // [XCDE] #102: table full - a private copy rather than the object itself. BindProgram recording the live object
+        // let the render worker read it while set_shaders emptied it (both crashes of #102: no vertex code / c1 at 0)
+        static int warned;
+        if (!warned++) LOG("[nvn] program freeze table full (%u): unshared copies from now on\n", FROZEN_TAB);
+        memcpy(r, &q, sizeof q);
+        r->frozen = r;
+    }
     return r;
 }
 

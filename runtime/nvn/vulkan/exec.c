@@ -4586,6 +4586,12 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         NvnShaderStage *ss = &st.program->stages[stage];
         uint64_t size = ss->const_size ? ss->const_size : 16;
         if (size < si->cbuf_size[1]) size = si->cbuf_size[1];
+        // [XCDE] #102 crash 1: the bound program's stage had no code (the live object emptied by set_shaders under us)
+        // while its translation reads c1: guest_copy(0 + 0) was memcpy from NULL. Zeros, as for an unbound buffer.
+        if (!ss->code_addr) {
+            if (size > sizeof zeros) size = sizeof zeros;
+            return ubo_span(vk_transient_copy(zeros, size, 256), size);
+        }
         return ubo_span(guest_copy(ss->code_addr + ss->const_offset, size), size);  // (constant: shared per submission)
     }
     int idx = k - 3;  // cbuf_base
