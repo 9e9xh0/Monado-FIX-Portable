@@ -7700,7 +7700,10 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
         if (scene) {  // [XCDE] T213: the upscaled scene + what the HUD passes added (render size, bilinear)
             fg_scene = t;
             TexBackend *hud = post_image(5, ow, oh);
-            float ph[8] = {1.0f / ow, 1.0f / oh};
+            // [XCDE] GitHub #103: b.x = XCDE_TMP_HUD_OLD (tmp_hud.frag: the composite before #103)
+            static int hud_old = -1;
+            if (hud_old < 0) { const char *e = getenv("XCDE_TMP_HUD_OLD"); hud_old = e && *e && *e != '0'; }
+            float ph[8] = {1.0f / ow, 1.0f / oh, 0, 0, (float)hud_old};
             VkImageView hi[3] = {t, v, scene};
             post_pass(cb, "tmp_hud.frag", hi, 3, hud, ph, false);
             vk_full_barrier(cb);

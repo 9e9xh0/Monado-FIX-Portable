@@ -517,7 +517,39 @@ static const char *builtin_src(const char *name, int *stage) {
                "    mm = max(mm, max(e.r, max(e.g, e.b)));\n"
                "  }\n"
                "  float w = smoothstep(1.5 / 255.0, 0.03, mm);\n"
-               "  o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0);\n"
+               // [XCDE] GitHub #103: the scene inside fin (the game's render-size image) is JITTERED: exec.c moves the
+               // scene's viewport by the Halton offset and only the upscaler undoes it. Wherever fin was taken
+               // under a see-through HUD pixel (text outlines and drop shadows, the minimap rim, T220's one-texel
+               // ring) a shaking copy of the scene showed through. With fin = s * (1 - a) + hud * a, the composite
+               // over the upscaled scene is exactly  fin + (1 - a) * (up - s)  - the jittered s cancels - once the
+               // HUD's opacity a is known. It is estimated per pixel:
+               //  - aMin: the least opacity that explains the change (exact for black / white overlays: shadows,
+               //    outlines, text);
+               //  - aReg: over the 3x3 render texels the HUD touched, fin follows the scene with slope (1 - a)
+               //    (opaque HUD: flat; see-through: the scene's texture shows), used where the scene has texture;
+               //  - where the scene is flat the old weight (w, T216: strong change = the game's pixel) - a flat
+               //    scene does not shake anyway.
+               // Pixels the HUD did not change stay the upscaled scene. XCDE_TMP_HUD_OLD=1: the composite before #103.
+               "  if (pc.b.x != 0.0) { o = vec4(mm > 1.5 / 255.0 ? mix(clamp(up + d, 0.0, 1.0), fin, w) : up, 1.0); return; }\n"
+               "  if (m <= 1.5 / 255.0) { o = vec4(up, 1.0); return; }\n"
+               "  vec3 s0 = fin - d;\n"
+               "  vec3 lo = max(d / max(1.0 - s0, vec3(1.0 / 255.0)), -d / max(s0, vec3(1.0 / 255.0)));\n"
+               "  float aMin = clamp(max(lo.r, max(lo.g, lo.b)), 0.0, 1.0);\n"
+               "  vec3 sf = vec3(0.0), ss = vec3(0.0), sfs = vec3(0.0), sss = vec3(0.0);\n"
+               "  float n = 0.0;\n"
+               "  for (int y = -1; y <= 1; y++)\n"
+               "    for (int x = -1; x <= 1; x++) {\n"
+               "      vec2 q = uv + rt * vec2(x, y);\n"
+               "      vec3 f = texture(finalTex, q).rgb, s = texture(sceneTex, q).rgb, e = abs(f - s);\n"
+               "      if (max(e.r, max(e.g, e.b)) <= 1.5 / 255.0) continue;\n"  // (only texels the HUD changed)
+               "      sf += f; ss += s; sfs += f * s; sss += s * s; n += 1.0;\n"
+               "    }\n"
+               "  vec3 cv = sfs / n - sf * ss / (n * n), vr = sss / n - ss * ss / (n * n);\n"
+               "  float V = vr.r + vr.g + vr.b;\n"
+               "  float aReg = clamp(1.0 - (cv.r + cv.g + cv.b) / max(V, 1e-6), 0.0, 1.0);\n"
+               "  float r = n >= 4.0 ? smoothstep(3e-4, 3e-3, V) : 0.0;\n"  // (trust the slope where the scene has texture)
+               "  float a = max(aMin, mix(w, aReg, r));\n"
+               "  o = vec4(clamp(fin + (1.0 - a) * (up - s0), 0.0, 1.0), 1.0);\n"
                "}\n";
     }
     if (!strcmp(name, "post.vert")) {
