@@ -2496,6 +2496,9 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
 }
 static Prog *get_program_(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(np->stage_mask & 1)) return NULL;  // [XCDE] a program without a fragment stage gets an empty one (no_fs)
+    // [XCDE] #102: a vertex stage without code (the live object read while set_shaders refills it) went to the translator
+    // as a NULL blob: an access violation at 0x88. No program for that draw, as without a vertex stage.
+    if (!np->stages[0].code_addr || !nvn_stage_code(&np->stages[0])) return NULL;
     // [XCDE] T185: keyed by content only (T125 hashes), not by guest address - the same shaders streamed in again at
     // another address made new programs and pipelines (~10,000 program builds in 69 min of soak play, private memory
     // +0.8 GB/h). Translation reads only the code and the key, so equal content gives the same program.
