@@ -66,6 +66,7 @@ typedef struct {
     bool is_uint;            // [XCDE] sampled as an unsigned integer texture (key->tex_uint)
     bool image_p, image_store;  // [XCDE] audit: SULD / SUST in formatted (P) mode on this image; any SUST
     bool image_atomic;          // [XCDE] T226: SUATOM on this image (declared r32ui: GLSL image atomics need a format)
+    bool scaled_gather;         // [XCDE] #96: gathered through rgather (exec.c: the half-res grid patch keys on it)
     uint32_t bindless_cbuf, bindless_offset;
 } ShaderTexture;
 

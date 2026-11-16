@@ -1,9 +1,11 @@
 // Included as a C string in generated GLSL for scaled guest-texel gathers.
 // Each component samples the centre of a guest texel, preserving the gather
 // ordering (bottom-left, bottom-right, top-right, top-left) after scaling.
+// s = rscale[1 + unit]: xy the texture's scale, w = 1 on depth textures (#96: plain gather, own physical 2x2).
 static const char scaled_gather_glsl[] =
-"vec4 rgather(sampler2D t, vec2 uv, vec2 sc, int component) {\n"
-" if (sc == vec2(1.0)) {\n"
+"vec4 rgather(sampler2D t, vec2 uv, vec4 s, int component) {\n"
+" vec2 sc = s.xy;\n"
+" if (sc == vec2(1.0) || s.w > 0.5) {\n"
 "  if (component == 0) return textureGather(t, uv, 0);\n"
 "  if (component == 1) return textureGather(t, uv, 1);\n"
 "  if (component == 2) return textureGather(t, uv, 2);\n"
