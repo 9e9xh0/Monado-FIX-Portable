@@ -59,12 +59,12 @@ typedef u128 __attribute__((aligned(1), may_alias)) u128u;
 // through FBAD / fix. Detected once per translation unit on first use (CPUID FMA + AVX + OSXSAVE, and XGETBV: the OS
 // saves XMM/YMM state), so the game library needs nothing from the runtime. XCDE_HOST_FMA=0 forces the library call.
 #if defined(__x86_64__) && !defined(__FMA__)
-#include <cpuid.h>
-#include <stdlib.h>
+#include <stdlib.h> // (no <cpuid.h>: its __cpuid macro breaks MinGW's <intrin.h> in units that include both)
 static int simd_host_fma; // 0 not checked yet, 1 library fma, 2 vfmadd
 static __attribute__((noinline, cold)) int simd_host_fma_detect(void) {
-    unsigned a, b, c, d, need = (1u << 12) | (1u << 27) | (1u << 28); // FMA, OSXSAVE, AVX
-    int ok = __get_cpuid(1, &a, &b, &c, &d) && (c & need) == need;
+    unsigned a = 1, b, c = 0, d, need = (1u << 12) | (1u << 27) | (1u << 28); // FMA, OSXSAVE, AVX
+    __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d)); // leaf 1 exists on every x86-64 CPU
+    int ok = (c & need) == need;
     if (ok) {
         unsigned lo, hi;
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0)); // only reached with OSXSAVE set
