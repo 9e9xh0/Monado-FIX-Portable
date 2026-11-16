@@ -1457,3 +1457,11 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   `XCDE_TRACE_HALFRES=1`: registra los draws parcheados. Test nativo: `ShaderTexture.scaled_gather`; `exec.c` compila.
   No ejecutado aquí. Hecho cuando: el reportero confirma los bordes limpios a 4K (hierba, pies, cabeza) y
   `XCDE_HALFRES_GRID=0` los devuelve.
+- [ ] T267 **FSR 4 Lite: profundidad invertida.** FSR 3 recibe `DEPTH_INFINITE` sin invertir; el port de FSR 4 Lite no
+  tiene ninguna entrada de convención de profundidad (reproduce los shaders de AMD tal como se grabaron) y lee
+  profundidad invertida (cerca = 1). Con la profundidad estándar de XCDE sus pruebas de borde tomaban el fondo por el
+  primer plano: estelas y parpadeo en los contornos e imagen blanda (historial rechazado). `tmp_prep.frag` le entrega
+  `1 - d` sólo a FSR 4 Lite; con el plano lejano infinito del juego es exactamente la profundidad invertida-infinita.
+  Reportero (A/B a 4K, Balanced): "mucho más nítido", menos estelas. Queda: la hierba centellea más al desplazarse de
+  lado (pendiente: `XCDE_TMP_LOD_BIAS=0`, el sesgo de LOD negativo sobre la hierba con alpha test).
+  `XCDE_FSR4_DEPTH_INVERT=0`: como antes. Compilado; probado sólo por el reportero.

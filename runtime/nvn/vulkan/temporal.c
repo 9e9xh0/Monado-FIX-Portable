@@ -469,6 +469,13 @@ static void prep(VkCommandBuffer cb, VkImageView color_view, VkImageView scene_v
 #ifdef __linux__
     pc[24] = native_temporal() ? 1.0f : 0.0f;  // [XCDE] linear colour for the native upscalers
 #endif
+    // [XCDE] FSR 4 Lite has no depth-convention input (FSR 3 gets DEPTH_INFINITE, not inverted): the port replays
+    // AMD's shaders as recorded, and they read reversed depth (near = 1). With XCDE's standard depth its edge tests
+    // took the background for the foreground: ghosting and flicker along outlines, a soft image (history rejected).
+    // With the game's infinite far plane 1 - d is exactly the reversed-infinite depth. XCDE_FSR4_DEPTH_INVERT=0: as before.
+    static int fsr4_inv = -1;
+    if (fsr4_inv < 0) { const char *e = getenv("XCDE_FSR4_DEPTH_INVERT"); fsr4_inv = !(e && *e == '0'); }
+    pc[25] = g_settings.upscaler == UPSCALE_FSR4_LITE && fsr4_inv ? 1.0f : 0.0f;
     for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) pc[c * 4 + r] = (float)reproj[r * 4 + c];  // (GLSL: column-major)
     pc[16] = jit[0]; pc[17] = jit[1]; pc[18] = (float)rw; pc[19] = (float)rh;
     static int precise = -1;  // [XCDE] T228: our exact camera motion where the game's velocity says the same (tmp_prep.frag)
