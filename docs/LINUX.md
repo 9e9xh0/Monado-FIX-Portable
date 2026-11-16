@@ -7,7 +7,8 @@ The same runtime and recompiled game code as the Windows build, compiled nativel
 
 - x86-64-v2 CPU (SSE4.2, POPCNT, CMPXCHG16B), a Vulkan 1.2+ driver (Mesa RADV/ANV, NVIDIA proprietary).
 - `clang`, `pkg-config` and the development packages of SDL3, Vulkan (headers + loader), shaderc, opus,
-  FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample) and zlib.
+  FFmpeg (libavcodec, libavformat, libavutil, libswscale) and zlib. Release builds use
+  `scripts/build_ffmpeg.sh` (minimal LGPL: VP9/Vorbis/WebM).
 - The Vulkan Memory Allocator header `vk_mem_alloc.h` (system package, or `VMA_INCLUDE_DIR=<dir>`).
 - Python 3 with `capstone unicorn lz4` for the recompiler:
   `python3 -m venv .venv && .venv/bin/pip install capstone unicorn lz4`.
