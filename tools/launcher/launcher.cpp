@@ -118,6 +118,7 @@ struct Cfg {
     char gpu_uuid[33] = "";
     int vulkan_api = 0;
     bool fps_overlay = true, upscaler_auto = true;
+    int fps_overlay_style = 0;  // GitHub #39: 0 detailed, 1 simple (xcde.ini fps_overlay_style)
     int gpu_index = -1;
     int quality_preset=0, dynamic_min_height=0, dynamic_max_height=0;
     unsigned effects_off=0;
@@ -575,6 +576,7 @@ static void load() {
         else if (!strcmp(k, "show_fps")) g.show_fps = atoi(v) != 0;
         else if (!strcmp(k, "vulkan_api")) g.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g.fps_overlay = atoi(v) != 0;
+        else if (!strcmp(k, "fps_overlay_style")) g.fps_overlay_style = !strcmp(v, "simple") ? 1 : 0;
         else if (!strcmp(k, "gpu_uuid")) snprintf(g.gpu_uuid, sizeof g.gpu_uuid, "%s", v);
         else if (!strcmp(k, "gpu_index")) g.gpu_index = std::clamp(atoi(v), -1, 255);
         else if (!strcmp(k, "gpu_profile")) g.gpu_profile = !strcmp(v, "compatibility");
@@ -636,6 +638,7 @@ static bool save() {
             k_wins[g.win], k_res_ini[g.res], g.upscaler_auto ? "auto" : k_ups_ini[g.upscaler], g.smaa ? "smaa" : "off", g.show_fps);
     fprintf(f, "aspect = %s\n", g.aspect == ASPECT_ORIGINAL ? "original" : "auto");
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g.vulkan_api == 12 ? "1.2" : g.vulkan_api == 13 ? "1.3" : g.vulkan_api == 14 ? "1.4" : "auto", g.fps_overlay);
+    fprintf(f, "fps_overlay_style = %s\n", g.fps_overlay_style == 1 ? "simple" : "detailed");
     fprintf(f, "upscale_quality = %s\nframe_gen = %d\n", k_uq_ini[g.uquality], g.frame_gen);
     if (g.sharpness < 0.0f) fprintf(f, "upscale_sharpness = default\n");
     else fprintf(f, "upscale_sharpness = %.3f\n", g.sharpness);
@@ -1579,7 +1582,16 @@ static void tab_graphics() {
     ImGui::SetItemTooltip("%s", g.ui_lang
         ? "Keeps grass visible farther away. Higher settings cost FPS. Original keeps High's nearby detail at the original distance; Low halves reach. Also live in F1."
         : "Mantiene la hierba visible más lejos. Los valores altos cuestan FPS. Original conserva el detalle cercano de Alta a la distancia original; Baja reduce el alcance a la mitad. También en vivo en F1.");
-    ImGui::Checkbox(g.ui_lang ? "On-screen FPS counter" : "Contador FPS en pantalla", &g.fps_overlay);
+    {   // [XCDE] GitHub #39: off / simple (FPS + frame time) / detailed (frame-time graph, lows, GPU / CPU / memory)
+        const char *modes_en[] = {"Off", "Simple", "Detailed"}, *modes_es[] = {"Desactivado", "Simple", "Detallado"};
+        int mode = !g.fps_overlay ? 0 : g.fps_overlay_style == 1 ? 1 : 2;
+        if (monado_combo(g.ui_lang ? "Performance overlay" : "Superposición de rendimiento", &mode, g.ui_lang ? modes_en : modes_es, 3)) {
+            g.fps_overlay = mode != 0;
+            if (mode) g.fps_overlay_style = mode == 1 ? 1 : 0;
+        }
+        ImGui::SetItemTooltip("%s", g.ui_lang ? "Simple: FPS and frame time. Detailed: frame-time graph, 1% / 0.1% lows, GPU and CPU load, memory and render resolution."
+                                              : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, carga de GPU y CPU, memoria y resolución.");
+    }
     ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g.show_fps);
     ImGui::SeparatorText(g.ui_lang ? "Shadows, detail and effects" : "Sombras, detalle y efectos");  // [XCDE]
     for (int i : gfx_ui_options) {

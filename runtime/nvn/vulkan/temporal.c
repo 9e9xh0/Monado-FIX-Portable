@@ -641,6 +641,17 @@ float tmp_lod_bias(void) {
     }
 }
 
+// [XCDE] GitHub #39: what the performance overlay shows as the 3D scene size and the upscaler in use: the render size
+// the temporal upscaler was last given, if it ran within the last few frames (else NULL: no temporal upscaling now).
+static uint32_t g_seen_rw, g_seen_rh, g_seen_ow, g_seen_oh;
+static uint64_t g_seen_frame;
+const char *tmp_overlay_info(uint32_t *rw, uint32_t *rh, uint32_t *ow, uint32_t *oh) {
+    uint64_t f = g_seen_frame;
+    if (!f || renderer_present_count() + 1 - f > 4) return NULL;
+    *rw = g_seen_rw; *rh = g_seen_rh; *ow = g_seen_ow; *oh = g_seen_oh;
+    return use_dlss() ? "DLSS" : g_settings.upscaler == UPSCALE_FSR4_LITE ? "FSR 4 Lite" : "FSR 3.1";
+}
+
 VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color_view, TexBackend *depth, const TmpCamera *cam,
                         const float jitter[2], bool dm1, uint32_t ow, uint32_t oh) {
     static TmpCamera prev;
@@ -663,6 +674,7 @@ VkImageView tmp_upscale(VkCommandBuffer cb, TexBackend *color, VkImageView color
     }
     prev_rw = rw; prev_rh = rh; prev_ow = ow; prev_oh = oh; prev_upscaler = g_settings.upscaler;
     prev_quality = g_settings.upscale_quality;
+    g_seen_rw = rw; g_seen_rh = rh; g_seen_ow = ow; g_seen_oh = oh; g_seen_frame = renderer_present_count() + 1;  // [XCDE] GitHub #39 (overlay)
     // previous view-projection x inverse(current): this frame's NDC -> the previous frame's clip position
     double cur[16], pv[16], inv[16], reproj[16];
     mat_from_rows(cam->viewproj, cur);

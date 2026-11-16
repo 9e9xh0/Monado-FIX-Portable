@@ -41,6 +41,7 @@ enum { AMD_FIX_AUTO = -1, AMD_FIX_OFF = 0, AMD_FIX_ON = 1 };
 enum { SESSION_FIX_AUTO = -1, SESSION_FIX_OFF = 0, SESSION_FIX_ON = 1 };
 extern const char *const g_language_codes[N_LANGUAGES];  // what the game is told: "ja", "en-US", "es", ...
 extern const char *const g_language_names[N_LANGUAGES];  // for the menu ("Auto", "Japanese", ..., "Spanish")
+enum { FPS_OVERLAY_DETAILED = 0, FPS_OVERLAY_SIMPLE = 1 };  // [XCDE] GitHub #39
 typedef struct {
     int aspect;          // ASPECT_*: unlocked = fill the window (wider/taller views), original = 16:9 with bars
     bool fullscreen;
@@ -52,6 +53,7 @@ typedef struct {
     bool movie_audio;
     bool show_fps;
     bool fps_overlay;     // T258: on-screen native-FPS / frame-time display
+    int fps_overlay_style; // GitHub #39: FPS_OVERLAY_DETAILED (default) or FPS_OVERLAY_SIMPLE (xcde.ini fps_overlay_style)
     bool upscaler_auto;   // T257: DLSS SR when the SDK confirms support, otherwise FSR 1
     int vulkan_api;       // T256: 0 automatic, 12/13/14 requested backend route (restart)
     int fps;  // [XCDE] frame rate target: 30 (the game's own), 60, 120, 144..., 0 = unlimited (runtime/hle/framepace.c)
