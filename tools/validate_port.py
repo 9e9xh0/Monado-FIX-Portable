@@ -85,6 +85,7 @@ def main():
         'test_settings_roundtrip': ['runtime/host/settings_ini.c', 'runtime/hle/graphics.c', 'runtime/hle/foliage_distance.c',
                                     str(sdk / 'lib/libwinpthread.dll.a')],
         'test_output_scale': ['runtime/nvn/output_scale.c'],
+        'test_host_fma': ['-O1', '-fno-strict-aliasing'],  # [XCDE] FMA3 path vs the library fma
         'test_texture_index': ['-O1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections'],
         'test_romfs_cache': ['-O1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', str(sdk / 'lib/libwinpthread.dll.a')],
         'test_translate_tex': ['runtime/nvn/maxwell/translate.c'],

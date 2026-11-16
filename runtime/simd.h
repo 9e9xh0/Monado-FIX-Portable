@@ -5,7 +5,7 @@
 // for arithmetic / conversions / FRINTX/I, saturating FP->int conversions, fused multiply-add, ARM estimate
 // tables. Not modelled: FPSR cumulative exception bits and QC, FPCR trap enables, FP16 arithmetic (ARMv8.2).
 // FPCR.AHP is honoured by the half-precision conversions. Host assumptions: IEEE binary32/64, MXCSR (or the
-// host FPU) in round-to-nearest with denormals enabled; fma must be correctly rounded (build x86 with -mfma).
+// host FPU) in round-to-nearest with denormals enabled; fma must be correctly rounded (SIMD_FMA: FMA3 when the CPU has it, else the library).
 #pragma once
 #include <fenv.h>
 #include <math.h>
@@ -51,6 +51,46 @@ typedef u128 __attribute__((aligned(1), may_alias)) u128u;
 #define FPCR_FZ (1u << 24)
 #define FPCR_RM (3u << 22)
 #define FPCR_SLOW (FPCR_FZ | FPCR_RM)
+
+// [XCDE] Host FMA3. The x86-64-v2 baseline has no fused multiply-add, so a guest FMADD / FMLA becomes a call to the
+// C library's fma / fmaf (software on Windows, and one call per lane for vectors). CPUs with FMA3 (Intel Haswell,
+// AMD Piledriver and newer) run it as one vfmadd instead. Both are the exactly rounded IEEE result in the MXCSR
+// rounding mode (the slow path's fesetround applies to either), so results are bit-identical; NaN lanes still go
+// through FBAD / fix. Detected once per translation unit on first use (CPUID FMA + AVX + OSXSAVE, and XGETBV: the OS
+// saves XMM/YMM state), so the game library needs nothing from the runtime. XCDE_HOST_FMA=0 forces the library call.
+#if defined(__x86_64__) && !defined(__FMA__)
+#include <cpuid.h>
+#include <stdlib.h>
+static int simd_host_fma; // 0 not checked yet, 1 library fma, 2 vfmadd
+static __attribute__((noinline, cold)) int simd_host_fma_detect(void) {
+    unsigned a, b, c, d, need = (1u << 12) | (1u << 27) | (1u << 28); // FMA, OSXSAVE, AVX
+    int ok = __get_cpuid(1, &a, &b, &c, &d) && (c & need) == need;
+    if (ok) {
+        unsigned lo, hi;
+        __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0)); // only reached with OSXSAVE set
+        ok = (lo & 6) == 6;
+    }
+    const char *e = getenv("XCDE_HOST_FMA");
+    if (e && e[0] == '0') ok = 0;
+    return simd_host_fma = ok ? 2 : 1;
+}
+#define SIMD_HFMA(T, sfx)                                                                                      \
+    SI T simd_hfma_##sfx(T a, T b, T c) {                                                                     \
+        int m = simd_host_fma;                                                                                \
+        if (__builtin_expect(!m, 0)) m = simd_host_fma_detect();                                              \
+        if (__builtin_expect(m == 2, 1)) {                                                                    \
+            __asm__("vfmadd213" #sfx " %2, %1, %0" : "+x"(a) : "x"(b), "x"(c)); /* a = a * b + c */           \
+            return a;                                                                                         \
+        }                                                                                                     \
+        return __builtin_elementwise_fma(a, b, c);                                                            \
+    }
+SIMD_HFMA(float, ss) SIMD_HFMA(double, sd) SIMD_HFMA(vf32, ps) SIMD_HFMA(vf64, pd)
+#undef SIMD_HFMA
+#define SIMD_FMA(a, b, c) \
+    _Generic((a), float: simd_hfma_ss, double: simd_hfma_sd, vf32: simd_hfma_ps, vf64: simd_hfma_pd)(a, b, c)
+#else
+#define SIMD_FMA(a, b, c) __builtin_elementwise_fma(a, b, c)
+#endif
 
 enum { FOP_ADD, FOP_SUB, FOP_MUL, FOP_MULX, FOP_NMUL, FOP_DIV, FOP_ABD, FOP_SQRT, FOP_MADD, FOP_RECPS, FOP_RSQRTS,
        FOP_MAX, FOP_MIN, FOP_MAXNM, FOP_MINNM };
