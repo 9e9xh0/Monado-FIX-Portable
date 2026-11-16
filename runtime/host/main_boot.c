@@ -31,7 +31,7 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 
 // T265: the same lifted camera code is also linked into the headless host.
 uint32_t xcde_scene_aspect(uint32_t original, uint32_t camera) {
-#if defined(XCDE_GFX) && defined(_WIN32)
+#if defined(XCDE_GFX)  // (the Linux window build too: with _WIN32 here its view never widened)
     extern uint32_t vk_scene_aspect(uint32_t original, uint32_t camera);
     return vk_scene_aspect(original, camera);
 #else

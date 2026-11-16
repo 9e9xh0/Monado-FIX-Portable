@@ -56,6 +56,10 @@ typedef struct {
     // placement comes from uniform XFB_PARAM_INDEX. xfb_n 0: no capture.
     uint8_t xfb_n;
     uint8_t xfb_slot[16], xfb_comps[16];
+    uint8_t wide_ui;        // [XCDE] GitHub #97 (vertex / geometry epilogue): 0 off, else a UI draw whose viewport exec.c
+                            // widened past the centred 16:9 box by q = 1 + (wide_ui & 0x7F) / 32 (bit 7: along y, else x);
+                            // clip x (or y) is divided by q, so nothing moves inside the box and nothing is clipped at
+                            // its edges. (In the padding before xfb_stride: keys without it hash as before.)
     uint16_t xfb_stride;
 } ShaderKey;
 

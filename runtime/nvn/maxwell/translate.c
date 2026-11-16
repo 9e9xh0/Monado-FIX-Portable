@@ -1267,6 +1267,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         if (mode & 1) {
             if (c->key && c->key->flip_y) sp(&c->body, "    gl_Position.y = -gl_Position.y;\n");
             if (c->key && c->key->flip_x) sp(&c->body, "    gl_Position.x = -gl_Position.x;\n");
+            if (c->key && c->key->wide_ui) sp(&c->body, "    gl_Position.%c *= 32.0f / %u.0f;\n", (c->key->wide_ui & 0x80) ? 'y' : 'x', 32u + (c->key->wide_ui & 0x7Fu));
             if (c->key && c->key->depth_minus_one) sp(&c->body, "    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
             sp(&c->body, "    EmitVertex();\n");
         }
@@ -2444,6 +2445,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (stage == STAGE_VERTEX) {
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
         if (key && key->flip_x) sp(&s, "  gl_Position.x = -gl_Position.x;\n");
+        // [XCDE] GitHub #97: a UI draw whose viewport exec.c widened by q (shader.h wide_ui)
+        if (key && key->wide_ui) sp(&s, "  gl_Position.%c *= 32.0f / %u.0f;\n", (key->wide_ui & 0x80) ? 'y' : 'x', 32u + (key->wide_ui & 0x7Fu));
         if (key && key->depth_minus_one) sp(&s, "  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5f;\n");
     } else if (stage == STAGE_FRAGMENT) {
         int r = 0;
