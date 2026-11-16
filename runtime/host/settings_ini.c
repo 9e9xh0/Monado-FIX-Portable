@@ -96,6 +96,7 @@ void settings_load(void) {
         else if (!strcmp(k, "gpu_uuid")) snprintf(g_settings.gpu_uuid, sizeof g_settings.gpu_uuid, "%s", v);
         else if (!strcmp(k, "vulkan_api")) g_settings.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g_settings.fps_overlay = atoi(v) != 0;
+        else if (!strcmp(k, "fps_overlay_style")) g_settings.fps_overlay_style = !strcmp(v, "simple") ? FPS_OVERLAY_SIMPLE : FPS_OVERLAY_DETAILED;
         else if (!strcmp(k, "gpu_preset")) { g_settings.quality_preset = xcde_quality_parse(v); g_settings.gpu_performance = g_settings.quality_preset == QUALITY_PERFORMANCE || g_settings.quality_preset == QUALITY_POTATO; }
         else if (!strcmp(k, "low_memory")) g_settings.gpu_performance = atoi(v) != 0;
         else if (!strcmp(k, "dynamic_min_height")) g_settings.dynamic_min_height = atoi(v);
@@ -184,6 +185,7 @@ void settings_save(void) {
     gfx_save(f, &g_settings.graphics);  // [XCDE]
     fprintf(f, "party_switch = %d\n", g_party_switch);
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g_settings.vulkan_api == 12 ? "1.2" : g_settings.vulkan_api == 13 ? "1.3" : g_settings.vulkan_api == 14 ? "1.4" : "auto", g_settings.fps_overlay);
+    fprintf(f, "fps_overlay_style = %s\n", g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE ? "simple" : "detailed");
     fprintf(f, "gpu_uuid = %s\ngpu_preset = %s\ngpu_keep_heavy = %d\n", g_settings.gpu_uuid,
             xcde_quality_name(g_settings.quality_preset), g_settings.gpu_keep_heavy);
     fprintf(f, "low_memory = %d\ndynamic_min_height = %d\ndynamic_max_height = %d\neffects_off = %u\n",

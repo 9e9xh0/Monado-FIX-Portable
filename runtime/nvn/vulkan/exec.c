@@ -110,6 +110,12 @@ static uint64_t gpu_last_tag;
 static double gpu_last_ms=-1;
 static unsigned gpu_timestamp_bits;
 static bool compile_jobs_pending(void);
+// [XCDE] GitHub #39: the detailed performance overlay shows GPU time per frame, so it turns the timestamps on too.
+static _Atomic bool g_overlay_gpu_timing;
+void vk_overlay_gpu_timing(bool on) { atomic_store(&g_overlay_gpu_timing, on); }
+static bool gpu_timing_wanted(void) {
+    return prof || g_settings.res_mode==RES_DYNAMIC || atomic_load(&g_overlay_gpu_timing);
+}
 static void resolve_gpu_time(Sub *s, int index) {
     if (!s->ts) return;
     uint64_t t[4];
@@ -125,7 +131,7 @@ static void resolve_gpu_time(Sub *s, int index) {
 }
 double vk_native_gpu_ms(void) {
     // T260: only completed submissions; no WAIT flag or extra timeline wait. Sum every piece of a native frame.
-    if (!prof && g_settings.res_mode!=RES_DYNAMIC) return -1;
+    if (!gpu_timing_wanted()) return -1;
     if (compile_jobs_pending()) return -2; // T260: resolution cannot fix first-use compiler stalls
     if (!prof_qp) return -1;
     uint64_t done=vk_completed_seq(), frame=renderer_present_count();
@@ -537,7 +543,7 @@ VkCommandBuffer vk_cmd(void) {
             if (q->pool) vkCmdResetQueryPool(s->main, q->pool, 0, CK_MAX);
         }
         gp_mark(s->main, "(submission start; includes GPU idle before it)");
-        if (prof_qp && (prof || g_settings.res_mode==RES_DYNAMIC)) {
+        if (prof_qp && gpu_timing_wanted()) {
             vkCmdResetQueryPool(s->main, prof_qp, (uint32_t)cur_sub * 4, 2);
             vkCmdWriteTimestamp2(s->main, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, prof_qp, (uint32_t)cur_sub * 4);
             s->gpu_frame=renderer_present_count();
@@ -551,7 +557,7 @@ VkCommandBuffer vk_upload_cmd(void) {
     Sub *s = sub();
     if (!s->upload_begun) {
         begin_cb(&s->upload, &s->upload_begun);
-        if (prof_qp && (prof || g_settings.res_mode==RES_DYNAMIC)) {
+        if (prof_qp && gpu_timing_wanted()) {
             vkCmdResetQueryPool(s->upload,prof_qp,(uint32_t)cur_sub*4+2,2);
             vkCmdWriteTimestamp2(s->upload,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,prof_qp,(uint32_t)cur_sub*4+2);
             s->upload_ts=true;
@@ -3330,6 +3336,13 @@ static void gpl_reap(void) {  // (render thread)
     }
     gpl_ndead = k;
     pthread_mutex_unlock(&gpl_lock);
+}
+
+// [XCDE] GitHub #39: running totals for the performance overlay (ns, never reset): time the CPU blocked on the GPU
+// timeline (vk_wait_seq) and on shader / pipeline builds (wait_ready). Stats only: torn reads are harmless.
+void vk_overlay_wait_totals(uint64_t *gpu_wait_ns, uint64_t *shader_wait_ns) {
+    *gpu_wait_ns = cum_wait;
+    *shader_wait_ns = hc_wait_ns;
 }
 
 void vk_hitch_counters(uint64_t c[9]) {

@@ -30,10 +30,17 @@ bool dlss_available(void);
 const char *dlss_status(void);
 bool diag_deterministic(void);
 void plat_terminate(void);  // [XCDE] GitHub #22: the F1 menu's "exit the game" button (the platform's immediate exit)
+// [XCDE] GitHub #39: what the performance overlay (perf_overlay.h) reads
+int xcde_present_fps(void);
+float vk_display_hz_cached(void);
+bool tmp_fg_active(void);
+const char *tmp_overlay_info(uint32_t *render_w, uint32_t *render_h, uint32_t *out_w, uint32_t *out_h);
 }
 
 static XcdeFpsMeter fps_meter;
-extern "C" void menu_fps_tick(uint64_t now_ns) { xcde_fps_tick(&fps_meter, now_ns); }
+#include "perf_overlay.h"
+extern "C" void menu_fps_tick(uint64_t now_ns) { xcde_fps_tick(&fps_meter, now_ns); perf_frame_tick(now_ns); }
+extern "C" void menu_frame_info(uint32_t w, uint32_t h) { perf_game_w = (int)w; perf_game_h = (int)h; }
 static std::mutex q_lock;
 static SDL_Event q[256];
 static int q_n;
@@ -318,7 +325,18 @@ static void ui(void) {
                     : "Se aplica mientras juegas, sin reiniciar. Los valores altos mantienen la hierba visible más lejos y cuestan FPS.\n"
                       "Original conserva el detalle cercano de Alta a la distancia original del juego. Baja reduce el alcance a la mitad.");
             }
-            ImGui::Checkbox(g_settings.ui_lang ? "On-screen FPS counter" : "Contador FPS en pantalla", &g_settings.fps_overlay);
+            {   // [XCDE] GitHub #39: off / simple / detailed (perf_overlay.h), live
+                const char *modes_en[] = {"Off", "Simple", "Detailed"}, *modes_es[] = {"Desactivado", "Simple", "Detallado"};
+                int mode = !g_settings.fps_overlay ? 0 : g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE ? 1 : 2;
+                if (monado_combo(g_settings.ui_lang ? "Performance overlay" : "Superposición de rendimiento", &mode,
+                                 g_settings.ui_lang ? modes_en : modes_es, 3)) {
+                    g_settings.fps_overlay = mode != 0;
+                    if (mode) g_settings.fps_overlay_style = mode == 1 ? FPS_OVERLAY_SIMPLE : FPS_OVERLAY_DETAILED;
+                }
+                ImGui::SetItemTooltip("%s", g_settings.ui_lang
+                    ? "Simple: FPS and frame time. Detailed: frame-time graph, 1% / 0.1% lows, GPU time and waits, GPU / CPU load, memory and render resolution."
+                    : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, tiempo y esperas de GPU, carga de GPU / CPU, memoria y resolución.");
+            }
             ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g_settings.show_fps);
             ImGui::SeparatorText(g_settings.ui_lang ? "Shadows, detail and effects" : "Sombras, detalle y efectos");  // [XCDE]
             for (int i : gfx_ui_options) {
@@ -461,7 +479,7 @@ extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
     static float font_h;
     static uint64_t t_last;
     bool show_counter = g_settings.fps_overlay && !diag_deterministic();
-    if (!open_ && !show_counter) return;
+    if (!open_ && !show_counter) { perf_overlay_draw(false, 1, w, h); return; }  // (stops its GPU timing / sampling)
     if (!ctx) {
         ctx = ImGui::CreateContext();
         ImGui::SetCurrentContext(ctx);
@@ -484,7 +502,10 @@ extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
                 FILE *probe = fopen(f, "rb");
                 if (!probe) continue;
                 fclose(probe);
-                if ((font = io.Fonts->AddFontFromFileTTF(f, font_h, nullptr, io.Fonts->GetGlyphRangesDefault()))) break;
+                if ((font = io.Fonts->AddFontFromFileTTF(f, font_h, nullptr, io.Fonts->GetGlyphRangesDefault()))) {
+                    perf_font_big = io.Fonts->AddFontFromFileTTF(f, font_h * 2.0f, nullptr, io.Fonts->GetGlyphRangesDefault());  // (overlay FPS)
+                    break;
+                }
             }
             if (!font) io.Fonts->AddFontDefault();
         }
@@ -506,15 +527,7 @@ extern "C" void menu_render(void *cmd, uint32_t w, uint32_t h) {
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
     if (open_) ui();
-    if (show_counter) {
-        ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.65f);
-        ImGui::Begin("##native-fps", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-        if (fps_meter.fps > 0) ImGui::Text("FPS: %.1f  |  %.2f ms", fps_meter.fps, fps_meter.ms);
-        else ImGui::TextUnformatted("FPS: --");
-        ImGui::End();
-    }
+    perf_overlay_draw(show_counter, font_h / 16.0f, w, h);  // [XCDE] GitHub #39: simple / detailed (perf_overlay.h)
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)cmd);
 }

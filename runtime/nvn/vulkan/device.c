@@ -709,6 +709,7 @@ void vk_pipeline_cache_save(void) {
 
 // ================================================================== swapchain
 static bool g_vsync_fifo;  // FIFO chosen by the V-Sync option (backend_present's repeat presents)
+static VkPresentModeKHR g_present_mode_cur = VK_PRESENT_MODE_FIFO_KHR;  // (the last one chosen: overlay)
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -731,8 +732,16 @@ static VkPresentModeKHR present_mode(void) {
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
     g_vsync_fifo = vs;
-    for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
-    return VK_PRESENT_MODE_FIFO_KHR;
+    for (uint32_t i = 0; i < n; i++) if (m[i] == want) return g_present_mode_cur = want;
+    return g_present_mode_cur = VK_PRESENT_MODE_FIFO_KHR;
+}
+const char *vk_present_mode_name(void) {  // [XCDE] GitHub #39 (performance overlay)
+    switch (g_present_mode_cur) {
+    case VK_PRESENT_MODE_FIFO_KHR: return g_vsync_fifo ? "FIFO (V-Sync)" : "FIFO";
+    case VK_PRESENT_MODE_MAILBOX_KHR: return "Mailbox";
+    case VK_PRESENT_MODE_IMMEDIATE_KHR: return "Immediate";
+    default: return "?";
+    }
 }
 
 // [XCDE] how many times each frame is presented (1: once). FPS 30 with V-Sync on a 60 Hz monitor (the user: frame times
@@ -1475,6 +1484,7 @@ void backend_present(NvnTexture *t) {
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)total_frames + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
+        if (b) menu_frame_info(b->width, b->height);  // [XCDE] GitHub #39: the game image size, for the overlay
         menu_fps_tick(SDL_GetTicksNS()); // once per native frame, outside repeat/FG paths
         vkq_drain();  // [XCDE] ImGui records directly into this command buffer
         menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);

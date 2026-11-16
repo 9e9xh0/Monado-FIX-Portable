@@ -22,6 +22,8 @@ void menu_apply_window_requests(void *sdl_window);
 void menu_open_request(void);
 // T258: renderer thread, once per native game frame (not repeated presents / generated frames).
 void menu_fps_tick(uint64_t now_ns);
+// GitHub #39: renderer thread, each presented frame: the game image's size (the performance overlay shows it).
+void menu_frame_info(uint32_t image_w, uint32_t image_h);
 
 #if defined(__APPLE__) && defined(__OBJC__)
 // Render thread: draw the overlay into the drawable after the game image (no-op while closed).

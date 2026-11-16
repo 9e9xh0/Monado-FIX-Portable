@@ -7,3 +7,4 @@ void menu_render(void *cmd, uint32_t w, uint32_t h) { (void)cmd; (void)w; (void)
 void menu_test_open(void) {}
 void menu_open_request(void) {}
 void menu_fps_tick(uint64_t now_ns) { (void)now_ns; }
+void menu_frame_info(uint32_t w, uint32_t h) { (void)w; (void)h; }

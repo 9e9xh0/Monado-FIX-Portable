@@ -18,9 +18,10 @@ Claves nuevas de `xcde.ini`:
 vulkan_api = auto
 upscaler = auto
 fps_overlay = 1
+fps_overlay_style = detailed
 ```
 
-`vulkan_api` también admite `1.2`, `1.3`, `1.4`; `fps_overlay` admite `0/1`. Ambas interfaces conservan estas claves y las de otras versiones.
+`vulkan_api` también admite `1.2`, `1.3`, `1.4`; `fps_overlay` admite `0/1`; `fps_overlay_style` admite `detailed` (FPS, mínimos 1% / 0.1%, gráfica de tiempos, tiempo y esperas de GPU, carga de GPU / CPU / VRAM / RAM y resolución; GitHub #39) o `simple` (FPS y ms). Se cambia en vivo desde F1. Ambas interfaces conservan estas claves y las de otras versiones.
 
 ## Runtime oficial NVIDIA instalado
 
