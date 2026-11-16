@@ -21,7 +21,7 @@ El perfil Equilibrado conserva los ajustes existentes. Seleccionar Rendimiento a
 Desde la raíz, con Python instalado; todo el SDK y las salidas quedan en `build`:
 
 ```powershell
-python -m pip install --target build/toolchain ziglang==0.13.0 capstone lz4 unicorn
+python -m pip install --target build/toolchain ziglang==0.17.1 capstone lz4 unicorn
 python tools/setup_validation.py
 $env:PYTHONPATH = "$PWD\build\toolchain"
 New-Item -ItemType Directory -Force build/tmp | Out-Null
