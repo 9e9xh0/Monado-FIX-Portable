@@ -13,7 +13,7 @@ if(NOT ZIG_EXECUTABLE)
   execute_process(COMMAND "${_monado_py}" -c "import ziglang, os; print(os.path.dirname(ziglang.__file__))"
                   OUTPUT_VARIABLE _monado_zig_dir OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _monado_rc ERROR_QUIET)
   if(NOT _monado_rc EQUAL 0)
-    message(FATAL_ERROR "zig not found: install it into the project venv (${_monado_py} -m pip install ziglang==0.13.0) "
+    message(FATAL_ERROR "zig not found: install it into the project venv (${_monado_py} -m pip install ziglang==0.17.1) "
                         "or pass -DZIG_EXECUTABLE=<path to zig>")
   endif()
   find_program(_monado_zig NAMES zig zig.exe HINTS "${_monado_zig_dir}" NO_DEFAULT_PATH REQUIRED)

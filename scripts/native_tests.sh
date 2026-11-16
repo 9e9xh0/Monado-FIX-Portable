@@ -24,6 +24,8 @@ $Z -O1 -w -Iruntime/nvn -o build/test/test_tegra_copy.exe tests/native/test_tegr
 build/test/test_tegra_copy.exe
 $Z -O1 -w -o build/test/test_time_math.exe tests/native/test_time_math.c
 build/test/test_time_math.exe
+$Z -O1 -w -fno-strict-aliasing -Iruntime -o build/test/test_host_fma.exe tests/native/test_host_fma.c  # [XCDE] FMA3 vs library fma
+build/test/test_host_fma.exe
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_port_core.exe tests/native/test_port_core.c
 build/test/test_port_core.exe build/test/port-core.ini
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_gpu_probe.exe tests/native/test_gpu_probe.c
