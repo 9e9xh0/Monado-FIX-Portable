@@ -734,7 +734,7 @@ static const char *builtin_src(const char *name, int *stage) {
                "  vec3 dh = abs(c - texelFetch(sceneTex, min(cp, textureSize(sceneTex, 0) - 1), 0).rgb);\n"
                "  oHud = max(dh.r, max(dh.g, dh.b)) > 1.5 / 255.0 ? 1.0 : 0.0;\n"  // (pixels the HUD passes changed)
                "  float d = texelFetch(depthTex, min(ivec2(vec2(p) * vec2(dsz) / pc.a.zw), dsz - 1), 0).r;\n"
-               "  oDepth = d;\n"
+               "  oDepth = pc.c.y > 0.5 ? 1.0 - d : d;\n"  // [XCDE] FSR 4 Lite: reversed depth (temporal.c prep)
                "  vec2 uv = (gl_FragCoord.xy - pc.a.xy) / pc.a.zw;\n"
                "  vec4 ndc = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, pc.b.x > 0.5 ? d * 2.0 - 1.0 : d, 1.0);\n"
                "  vec4 q = pc.m * ndc;\n"

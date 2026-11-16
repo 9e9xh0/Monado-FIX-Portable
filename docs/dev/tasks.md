@@ -1457,3 +1457,18 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   `XCDE_TRACE_HALFRES=1`: registra los draws parcheados. Test nativo: `ShaderTexture.scaled_gather`; `exec.c` compila.
   No ejecutado aquí. Hecho cuando: el reportero confirma los bordes limpios a 4K (hierba, pies, cabeza) y
   `XCDE_HALFRES_GRID=0` los devuelve.
+- [ ] T267 **FSR 4 Lite: profundidad invertida.** FSR 3 recibe `DEPTH_INFINITE` sin invertir; el port de FSR 4 Lite no
+  tiene ninguna entrada de convención de profundidad (reproduce los shaders de AMD tal como se grabaron) y lee
+  profundidad invertida (cerca = 1). Con la profundidad estándar de XCDE sus pruebas de borde tomaban el fondo por el
+  primer plano: estelas y parpadeo en los contornos e imagen blanda (historial rechazado). `tmp_prep.frag` le entrega
+  `1 - d` sólo a FSR 4 Lite; con el plano lejano infinito del juego es exactamente la profundidad invertida-infinita.
+  Reportero (A/B a 4K, Balanced): "mucho más nítido", menos estelas. `XCDE_FSR4_DEPTH_INVERT=0`: como antes.
+  Compilado; probado sólo por el reportero.
+  Queda (abierto): la hierba centellea al desplazarse de lado (de frente / atrás es estable), también en Native AA y con
+  FSR 3 (que lo difumina). Descartado con el reportero, uno por uno: velocidad del juego (se usa; `XCDE_TMP_GAME_VEL=0`
+  y `XCDE_TMP_VEL_PRECISE=0` igual), jitter (`XCDE_TMP_NOJITTER=1`: menos parpadeo pero muy borroso, también en Native),
+  signo del jitter para FSR 4 (`XCDE_TMP_JIT_SIGN=1/2/3` igual), fases de jitter (ya `8 x ratio^2`), TSSAO y máscara de
+  sombra temporales (`XCDE_LIBNX=tssao=off` + `shadow_mask = full` igual), LOD bias (`XCDE_TMP_LOD_BIAS=0` igual), dither
+  del tonemap (las texturas 16x16 de 17101 son LUT 3D), alpha test con hash (rama `fix/foliage-alpha-hash`: alcanza el
+  prepass de la hierba, sin efecto visible). Lo que queda es la desoclusión de briznas que se solapan con paralaje
+  lateral y el modelo Lite (sin entrada de máscara reactiva en este port).
