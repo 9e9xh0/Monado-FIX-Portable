@@ -3600,10 +3600,34 @@ static bool var_seen(uint64_t h) {
     }
     return true;  // (full: stop recording)
 }
+// [XCDE] issue #25: the variants by their shaders' code hashes (chains in recording order). prewarm_drain scanned all
+// of them (~30,000 with the seed) for every program registered - ~400 a second on the render thread after Colony 9's
+// Mechon attack in the tester's log. A chain holds the variants whose (vs, fs) hashes share a bucket.
+#define VAR_BUCKETS (1u << 16)
+static uint32_t *var_head, *var_tail, *var_next;  // (variant index + 1; 0 = none)
+static size_t var_next_cap;
+static bool var_index_broken;  // (a variant could not be indexed: scan, as before)
+static uint32_t var_bucket(uint64_t vs, uint64_t fs) {
+    uint64_t h = vs ^ (fs * 0x9E3779B97F4A7C15ull);
+    h ^= h >> 29; h *= 0xBF58476D1CE4E5B9ull; h ^= h >> 32;
+    return (uint32_t)h & (VAR_BUCKETS - 1);
+}
 static void var_add(const Variant *v) {
     if (var_n == var_cap) { var_cap = var_cap ? var_cap * 2 : 4096; var_db = realloc(var_db, var_cap * sizeof *var_db); }
     var_db[var_n++] = *v;
+    if (!var_head) { var_head = calloc(VAR_BUCKETS, sizeof *var_head); var_tail = calloc(VAR_BUCKETS, sizeof *var_tail); }
+    if (var_n > var_next_cap) {
+        size_t cap = var_next_cap ? var_next_cap * 2 : 4096;
+        uint32_t *nx = realloc(var_next, cap * sizeof *nx);
+        if (nx) { var_next = nx; var_next_cap = cap; }
+    }
+    if (var_index_broken || !var_head || !var_tail || var_n > var_next_cap) { var_index_broken = true; return; }  // (out of memory)
+    uint32_t b = var_bucket(v->code_hash[0], v->code_hash[1]), id = (uint32_t)var_n;
+    var_next[id - 1] = 0;
+    if (var_tail[b]) var_next[var_tail[b] - 1] = id; else var_head[b] = id;
+    var_tail[b] = id;
 }
+static bool var_indexed(void) { return !var_index_broken && var_head && var_tail && var_next_cap >= var_n; }
 static void var_write_header(FILE *f) { uint32_t hdr[2] = {0x56435843u, (uint32_t)sizeof(Variant)}; fwrite(hdr, 4, 2, f); }
 static void var_load(void) {
     if (var_loaded) return;
@@ -3668,10 +3692,52 @@ static NvnProgram **pw_queue;
 static int pw_n, pw_cap, pw_dropped;
 static pthread_mutex_t pw_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int g_reg_burst;  // [XCDE] T240: programs registered since the last present (vk_prewarm_hold)
+// [XCDE] issue #25: the same shaders registered again are prewarmed again only after PW_AGAIN frames. After Colony 9's
+// Mechon attack the game sets shaders ~400 times a second (tester's log: 30,000 - 48,000 per 2 min, from ~1,000): each
+// one was copied (kept for the run), matched against every variant on the render thread, queued its library jobs
+// again, and counted toward the registration burst that holds the next frame until the build work is done
+// (vk_prewarm_hold) - the stutters that grew from then on. XCDE_PREWARM_DEDUP=0: every registration, as before.
+#define PW_SEEN (1u << 16)
+#define PW_AGAIN 3600  // frames (~1 min at 60 fps): pipelines evicted meanwhile are prewarmed again
+static struct { uint64_t h, frame; } pw_seen[PW_SEEN];
+static uint64_t pw_n_skipped;
+static bool pw_recent(const NvnProgram *np) {  // (pw_lock held) prewarmed within PW_AGAIN frames: skip it
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_PREWARM_DEDUP"); on = !(e && *e == '0'); }
+    if (!on) return false;
+    bool has_gs = (np->stage_mask & 4) && np->stages[2].code_addr;
+    uint64_t h = 0xcbf29ce484222325ull;
+    h = (h ^ np->stages[0].code_hash) * 0x100000001B3ull;
+    h = (h ^ np->stages[1].code_hash) * 0x100000001B3ull;
+    h = (h ^ (np->stages[1].code_addr != 0)) * 0x100000001B3ull;
+    h = (h ^ (has_gs ? np->stages[2].code_hash : 0)) * 0x100000001B3ull;
+    h = (h ^ has_gs) * 0x100000001B3ull;
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;
+    if (!h) h = 1;
+    uint64_t now = renderer_present_count() + 1;  // (+1: frame 0 is a stamp, not "never")
+    for (uint32_t i = (uint32_t)h & (PW_SEEN - 1), n = 0; n < 64; i = (i + 1) & (PW_SEEN - 1), n++) {
+        if (pw_seen[i].h == h) {
+            if (now - pw_seen[i].frame < PW_AGAIN) return true;
+            pw_seen[i].frame = now;
+            return false;
+        }
+        if (!pw_seen[i].h) { pw_seen[i].h = h; pw_seen[i].frame = now; return false; }
+    }
+    return false;  // (crowded: prewarm it, as before)
+}
 void vk_program_registered(const NvnProgram *np) {  // (objects.c set_shaders, game thread)
     if (!prewarm_on() || !(np->stage_mask & 1)) return;
+    pthread_mutex_lock(&pw_lock);
+    if (pw_recent(np)) {
+        uint64_t k = ++pw_n_skipped;
+        pthread_mutex_unlock(&pw_lock);
+        if ((k & (k - 1)) == 0) LOG("[prewarm] %llu registrations of shaders prewarmed within %d frames skipped\n", (unsigned long long)k, PW_AGAIN);
+        return;
+    }
+    pthread_mutex_unlock(&pw_lock);
     atomic_fetch_add(&g_reg_burst, 1);
     NvnProgram *c = malloc(sizeof *c);
+    if (!c) return;
     *c = *np;
     c->backend = NULL;
     pthread_mutex_lock(&pw_lock);
@@ -3749,8 +3815,11 @@ static void prewarm_drain(void) {  // (render thread, start of each draw)
         bool any = false;
         uint32_t lib_seen[16];  // [XCDE] T212: (program, fill mode, samples, a2c) of its variants already queued
         int nlib_seen = 0;
-        for (size_t v = 0; v < var_n; v++) {
-            Variant *vr = &var_db[v];
+        // [XCDE] issue #25: only the variants of this program's bucket (all of them without the index)
+        bool idx = var_indexed();
+        uint32_t vid = idx ? var_head[var_bucket(np->stages[0].code_hash, np->stages[1].code_hash)] : 0;
+        for (size_t v = 0; idx ? vid != 0 : v < var_n; idx ? (vid = var_next[vid - 1]) : v++) {
+            Variant *vr = &var_db[idx ? vid - 1 : v];
             if (vr->code_hash[0] != np->stages[0].code_hash || vr->code_hash[1] != np->stages[1].code_hash ||
                 vr->has_gs != has_gs || (has_gs && vr->code_hash[2] != np->stages[2].code_hash)) continue;
             g_draw_gs_in = vr->gs_in;
@@ -5462,6 +5531,7 @@ void vk_exec_reset(void) {
     g_cs_n = 0;
     gcopy_gen++;
     nwant = 0;
+    pthread_mutex_lock(&pw_lock); memset(pw_seen, 0, sizeof pw_seen); pthread_mutex_unlock(&pw_lock);  // [XCDE] issue #25: a new boot prewarms again
     for (int i = 0; i < nxsh; i++) vmaDestroyBuffer(g_vk.vma, xsh[i].buf, xsh[i].mem);  // (GPU idle; refilled on their next write)
     nxsh = 0;
     if (gmem_buf) {
