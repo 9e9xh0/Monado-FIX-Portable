@@ -23,6 +23,7 @@ Exit codes: 0 ok, 1 usage, 2 bad game files, 3 generation failed, 4 compile fail
 5 link failed. Progress is written for the launcher: `<out>/progress.txt`.
 """
 import argparse
+import faulthandler
 import json
 import os
 import shutil
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -192,6 +194,8 @@ def generate_modules(dump, resources, out, jobs, log):
             if error.code:
                 raise SystemExit(f'gamebuild: lifting {module["name"]} failed: {error.code}')
         except Exception as error:  # noqa: BLE001 - reported to the player, not raised
+            log.write(traceback.format_exc())
+            log.flush()
             raise SystemExit(f'gamebuild: lifting {module["name"]} failed: {error}')
         finally:
             sys.argv, sys.stderr = saved_argv, saved_stderr
@@ -330,15 +334,29 @@ def main(argv=None):
     with (out / 'gamebuild.log').open('w', encoding='utf-8', errors='replace') as log:
         log.write(f'gamebuild: {dump} -> {out}\n')
         log.flush()
-        describe_compiler(resources, out, link, log)
-        note(log, 'generate: start')
-        modules = generate_modules(dump, resources, out, jobs, log)
-        note(log, f'generate: done; compile: start ({jobs} at a time)')
-        units = compile_units(resources, out, link, jobs, log)
-        note(log, 'compile: done; link: start')
-        report(out, 'link', 0, 1, 'Linking')
-        link_library(resources, out, link, units, log)
-        note(log, 'link: done')
+        # GitHub #104: a crash inside unicorn or capstone (native code) ended the builder with an empty log. faulthandler
+        # writes the Python stack of every thread into this log on an access violation, stack overflow or illegal
+        # instruction (and on Windows also names the exception code). A fail-fast (0xC0000409) can't be caught: the
+        # launcher records the exit code for that one.
+        faulthandler.enable(file=log, all_threads=True)
+        try:
+            describe_compiler(resources, out, link, log)
+            note(log, 'generate: start')
+            modules = generate_modules(dump, resources, out, jobs, log)
+            note(log, f'generate: done; compile: start ({jobs} at a time)')
+            units = compile_units(resources, out, link, jobs, log)
+            note(log, 'compile: done; link: start')
+            report(out, 'link', 0, 1, 'Linking')
+            link_library(resources, out, link, units, log)
+            note(log, 'link: done')
+        except SystemExit as error:
+            note(log, f'failed: {error.code}')
+            raise
+        except BaseException:  # noqa: BLE001 - logged, then raised as before
+            note(log, 'failed with an unexpected error:\n' + traceback.format_exc())
+            raise
+        finally:
+            faulthandler.disable()
         stamp.write_text(json.dumps({
             'fingerprint': current,
             'gamelib_id': (resources / 'gamelib-id.txt').read_text(encoding='utf-8').strip(),

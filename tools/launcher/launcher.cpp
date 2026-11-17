@@ -1132,10 +1132,37 @@ static void gc_poll() {
     g_gc_proc = 0;
 #endif
     bool ok = code == 0 && gc_ready();
-    g_status = ok ? (g.ui_lang ? "Game code ready." : "Código del juego listo.") :
-                    (g.ui_lang ? "Preparing the game code failed (log: build/last_gamebuild.log)" :
-                                 "Falló la preparación del código del juego (registro: build/last_gamebuild.log)");
-    if (ok && g_gc_then_play) g_gc_play_now = true;
+    if (ok) {
+        g_status = g.ui_lang ? "Game code ready." : "Código del juego listo.";
+        if (g_gc_then_play) g_gc_play_now = true;
+        return;
+    }
+    // GitHub #104: a builder that dies in native code (unicorn, capstone) prints nothing, so the exit code is the only
+    // clue to what happened: it goes on the status line and at the end of build/last_gamebuild.log.
+    char why[200];
+#ifdef _WIN32
+    const char *what = code == 1 ? (g.ui_lang ? "the builder reported an error" : "el constructor informó de un error")
+                     : code == 0xC0000409 ? (g.ui_lang ? "stopped by Windows: a security mitigation (Exploit protection, antivirus) or a stack check"
+                                                       : "detenido por Windows: una protección (Exploit protection, antivirus) o una comprobación de pila")
+                     : code == 0xC0000005 ? (g.ui_lang ? "crashed: access violation" : "se cerró: violación de acceso")
+                     : code == 0xC00000FD ? (g.ui_lang ? "crashed: stack overflow" : "se cerró: desbordamiento de pila")
+                     : code == 0xC000001D ? (g.ui_lang ? "crashed: illegal instruction" : "se cerró: instrucción no válida")
+                     : code == 0 ? (g.ui_lang ? "finished, but the library is missing or from another version"
+                                              : "terminó, pero la biblioteca falta o es de otra versión")
+                     : (g.ui_lang ? "ended unexpectedly" : "terminó de forma inesperada");
+    snprintf(why, sizeof why, "exit 0x%08lX, %s", (unsigned long)code, what);
+#else
+    if (WIFSIGNALED(st)) snprintf(why, sizeof why, "%s %d (%s)", g.ui_lang ? "killed by signal" : "terminado por la señal",
+                                  WTERMSIG(st), strsignal(WTERMSIG(st)));
+    else snprintf(why, sizeof why, "exit %d%s", code, code == 1 ? (g.ui_lang ? ", the builder reported an error" : ", el constructor informó de un error")
+                  : code == 0 ? (g.ui_lang ? ", but the library is missing or from another version" : ", pero la biblioteca falta o es de otra versión") : "");
+#endif
+    if (FILE *lf = fopen(path("build/last_gamebuild.log").c_str(), "a")) {
+        fprintf(lf, "\n[launcher] game code build failed: %s\n", why);
+        fclose(lf);
+    }
+    g_status = std::string(g.ui_lang ? "Preparing the game code failed (" : "Falló la preparación del código del juego (") + why +
+               (g.ui_lang ? "; log: build/last_gamebuild.log)" : "; registro: build/last_gamebuild.log)");
 }
 
 // ------------------------------------------------------------------ FSR 4 Lite model files
