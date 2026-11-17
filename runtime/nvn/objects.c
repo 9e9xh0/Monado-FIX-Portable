@@ -176,18 +176,26 @@ NVN(nvnSyncWait) {  // NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
         // integrated GPUs (vertices read in place) and with XCDE_FRAME_LAG=0. Only above 60 fps (FPS option above 60
         // or unlimited): the frame shown is then one frame older than the input it answers; at 30 / 60 a frame fits
         // the period without the overlap on the PCs that have the vertex cache, and the extra frame only felt laggy.
-        static int lag = -1;
-        if (lag < 0) {
+        // [XCDE] live: whether this PC can lag (vertex cache, async worker) is decided once; whether it does follows the
+        // FPS option (F1) every frame. The vertex cache keeps staging once lag has been on (harmless without lag).
+        static int able = -1, lag = -1;
+        if (able < 0) {
             extern int vk_vcache_state(void);
             const char *e = getenv("XCDE_FRAME_LAG");
             int vc = vk_vcache_state();
+            if (e) able = atoi(e) != 0 && backend_async() ? 2 : 0;  // (2: forced, whatever the FPS)
+            else if (vc >= 0) able = vc == 1 && backend_async();
+        }
+        if (able >= 0) {
             bool high = g_settings.fps == 0 || g_settings.fps > 60 || getenv("XCDE_FPS_PERIOD_SCALE");
-            if (e) lag = atoi(e) != 0 && backend_async();
-            else if (vc >= 0) lag = vc == 1 && backend_async() && high;
-            if (lag >= 0) LOG("[nvn] frame lag %s\n", lag ? "on (one frame in flight)" : "off");
-            // [XCDE] T-FRAME-LAG: tell the vertex cache to stage its refreshes through host memory (exec.c vc_flush):
-            // with the GPU a frame behind it must not read guest pages the game has already rewritten.
-            if (lag > 0) { extern void vk_set_frame_lag(bool on); vk_set_frame_lag(true); }
+            int now = able == 2 || (able == 1 && high);
+            if (now != lag) {
+                LOG("[nvn] frame lag %s\n", now ? "on (one frame in flight)" : "off");
+                // [XCDE] T-FRAME-LAG: tell the vertex cache to stage its refreshes through host memory (exec.c vc_flush):
+                // with the GPU a frame behind it must not read guest pages the game has already rewritten.
+                if (now) { extern void vk_set_frame_lag(bool on); vk_set_frame_lag(true); }
+                lag = now;
+            }
         }
         if (lag > 0 && c->x[30] == 0x70005bd038ull) {
             static uint64_t prev;

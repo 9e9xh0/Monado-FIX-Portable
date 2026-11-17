@@ -276,7 +276,12 @@ void vk_pace_frame(void) {
     static int on = -1;
     // (only for the game's own 30 fps: with the FPS option above 30 the frame interval is forced every frame, and a
     // "slow" counter would only make the game's internals believe the GPU is slow)
-    if (on < 0) { const char *e = getenv("LARECOMP_PACE"); on = e ? atoi(e) != 0 : g_settings.fps == 30 && !getenv("XCDE_FPS_INTERVAL"); }
+    // [XCDE] live: follows the FPS option (F1) unless LARECOMP_PACE forces it; leaving 30 drops the slow counters
+    static int forced = -2;
+    if (forced == -2) { const char *e = getenv("LARECOMP_PACE"); forced = e ? atoi(e) != 0 : getenv("XCDE_FPS_INTERVAL") ? 0 : -1; }
+    int now_on = forced >= 0 ? forced : g_settings.fps == 30;
+    if (on >= 0 && now_on != on && !now_on && pace_slow) { pace_slow = false; LOG("[pace] FPS option above 30: the game's own counters\n"); }
+    on = now_on;
     static uint64_t last, last_wait;
     static uint8_t over[60];
     static int idx, nover, calm;
