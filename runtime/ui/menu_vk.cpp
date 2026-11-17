@@ -22,6 +22,7 @@ extern "C" {
 #include "../settings.h"
 #include "../hle/foliage_distance.h"
 #include "../graphics_options.h"
+#include "../ui_scale.h"  // [XCDE] GitHub #121
 #include "menu.h"
 bool vk_imgui_backend_init(void);
 void input_reset(void);
@@ -253,6 +254,14 @@ static void ui(void) {
             const char *aspects[] = {g_settings.ui_lang ? "Automatic" : "Automático",
                                      g_settings.ui_lang ? "Original 16:9" : "16:9 original"};
             monado_combo(g_settings.ui_lang ? "Aspect ratio" : "Relación de aspecto", &g_settings.aspect, aspects, 2);
+            {   // [XCDE] GitHub #121: HUD size, live (runtime/ui_scale.h)
+                int hs = ui_scale_percent(g_settings.ui_scale);
+                if (ImGui::SliderInt(g_settings.ui_lang ? "HUD size" : "Tamaño del HUD", &hs, UI_SCALE_MIN, 100, "%d %%"))
+                    g_settings.ui_scale = ui_scale_percent(hs);
+                ImGui::SetItemTooltip("%s", g_settings.ui_lang
+                    ? "Shrinks the field and battle HUD towards its corners (minimap, party, arts palette, hints).\nMenus keep the game's own size. Applies at once."
+                    : "Reduce el HUD de exploración y combate hacia sus esquinas (minimapa, grupo, paleta de artes, ayudas).\nLos menús mantienen el tamaño del juego. Se aplica al instante.");
+            }
             ImGui::SeparatorText(T("Resolución y escalado"));
             int ri = 0;
             for (int i = 0; i < 8; i++) if (k_res_mode[i] == g_settings.res_mode) ri = i;

@@ -52,3 +52,7 @@ build/test/test_romfs_cache.exe build/test
 # [XCDE] T266: middle-button stick click as a pulse, dropped with ZL held.
 $Z -std=c11 -Wall -Wextra -Werror -o build/test/test_stick_click.exe tests/native/test_stick_click.c
 build/test/test_stick_click.exe
+
+# [XCDE] GitHub #121: HUD scale anchors and groups (runtime/ui_scale.h).
+$Z -std=c11 -Wall -Wextra -Werror -o build/test/test_ui_scale.exe tests/native/test_ui_scale.c
+build/test/test_ui_scale.exe

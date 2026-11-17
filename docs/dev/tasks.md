@@ -1499,3 +1499,22 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   Pruebas: `test_settings_roundtrip.c` (1.5 de entrada, 2.0 tras guardar/cargar), build Linux completo; el
   mantenedor confirma en juego que el personaje corre rápido con x2. Animaciones a ritmo original (puede haber algo
   de deslizamiento de pies).
+
+## Tamaño del HUD — 2026-11-17 (T271)
+
+- [x] T271 **GitHub #121: tamaño del HUD (50–100 %).** El binario no tiene símbolos, así que se hace en el renderer:
+  cada elemento del HUD es su propio draw (un quad, o un draw instanciado por cadena de texto) y su cbuf 3 de vértice
+  empieza con la transformación 2D a clip (`a b 0 tx / c d 0 ty`). `runtime/ui_scale.h` calcula la caja del elemento
+  (vértices del atributo 0, o los rectángulos de glifo del atributo 2 en el texto), agrupa las cajas del frame anterior
+  (margen 47 px de 720; sin depender del orden de dibujo) y elige el ancla del grupo: el borde que toca, o su propio
+  centro si no toca ninguno (retícula, marcadores sobre personajes); en horizontal, un grupo que cruza el centro se
+  centra (paleta de artes). `exec.c` pliega la escala en el mapeo del viewport (viewport y scissor la siguen; los
+  shaders no cambian). Los menús (fondo difuminado `b46dac89bce794ea`) quedan como los dibuja el juego; el marcador
+  "frame" `ccc3653e158b51c9` no sirve: es un shader de texto que también usa el HUD de combate.
+  Ajuste: `ui_scale` en `xcde.ini`, deslizador en el launcher (Gráficos > Pantalla) y en el menú F1 (al instante);
+  `XCDE_UI_SCALE=<0.5..1>` lo sobreescribe, `XCDE_UI_SCALE_LOG=1` registra cajas y anclas en el frame de depuración.
+  Pruebas: `tests/native/test_ui_scale.c` (cajas medidas del HUD de campo y combate), `test_settings_roundtrip.c`;
+  rutas `load_walk`, `battle_b`, `menu_all`, `cutscene_walk` a 0.5/0.6/0.7 en 16:9 y 21:9 (Linux, RX 6900 XT);
+  al 100 % la captura de `load_walk` (frame 3000) es idéntica píxel a píxel a la de `main`.
+  Límites conocidos: la retícula de objetivo se une al grupo de la barra del enemigo (16 px entre cajas) y sube un poco;
+  los indicadores "Warning" de las esquinas inferiores se acercan al centro con la paleta; diálogos con NPC sin probar.

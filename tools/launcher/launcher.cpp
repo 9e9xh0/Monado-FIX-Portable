@@ -25,6 +25,7 @@
 #include "../../runtime/ui/gpu_picker.h"
 #include "../../runtime/ui/theme.h"
 #include "../../runtime/ui/quality_controls.h"
+#include "../../runtime/ui_scale.h"  // GitHub #121
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
 #include "update_check.h"  // GitHub #119
@@ -142,6 +143,7 @@ struct Cfg {
     bool gpu_memory_budget = true, gpu_performance = false, gpu_keep_heavy = false;
     bool fullscreen = false;
     int aspect = ASPECT_UNLOCKED;
+    int ui_scale = 100;     // GitHub #121: HUD size in % (50..100), runtime/ui_scale.h
     int win = 0;            // index into k_wins
     int res = 0;            // index into k_res
     int upscaler = 1;       // 0 bilinear, 1 FSR 1, 2 FSR 3.1, 3 DLSS
@@ -577,6 +579,7 @@ static void load() {
         int i;
         if (!strcmp(k, "fullscreen")) g.fullscreen = atoi(v) != 0;
         else if (!strcmp(k, "aspect")) g.aspect = !strcmp(v, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
+        else if (!strcmp(k, "ui_scale")) g.ui_scale = ui_scale_percent(atoi(v));
         else if (!strcmp(k, "window") && (i = find(k_wins, 5, v)) >= 0) g.win = i;
         else if (!strcmp(k, "resolution") && (i = find(k_res_ini, 8, v)) >= 0) g.res = i;
         else if (!strcmp(k, "upscaler")) { g.upscaler_auto = !strcmp(v, "auto"); g.upscaler = !strcmp(v, "fsr") || g.upscaler_auto ? 1 : !strcmp(v, "fsr3") ? 2 : !strcmp(v, "dlss") ? 3 : !strcmp(v, "fsr4lite") ? 4 : 0; }
@@ -659,6 +662,7 @@ static bool save() {
     fprintf(f, "fullscreen = %d\nwindow = %s\nresolution = %s\nupscaler = %s\nantialias = %s\nshow_fps = %d\n", g.fullscreen,
             k_wins[g.win], k_res_ini[g.res], g.upscaler_auto ? "auto" : k_ups_ini[g.upscaler], g.smaa ? "smaa" : "off", g.show_fps);
     fprintf(f, "aspect = %s\n", g.aspect == ASPECT_ORIGINAL ? "original" : "auto");
+    fprintf(f, "ui_scale = %d\n", ui_scale_percent(g.ui_scale));
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g.vulkan_api == 12 ? "1.2" : g.vulkan_api == 13 ? "1.3" : g.vulkan_api == 14 ? "1.4" : "auto", g.fps_overlay);
     fprintf(f, "fps_overlay_style = %s\n", g.fps_overlay_style == 1 ? "simple" : "detailed");
     fprintf(f, "upscale_quality = %s\nframe_gen = %d\n", k_uq_ini[g.uquality], g.frame_gen);
@@ -1819,6 +1823,12 @@ static void tab_graphics() {
     ImGui::Checkbox(T("Pantalla completa"), &g.fullscreen);
     const char *aspects[] = {g.ui_lang ? "Automatic" : "Automático", g.ui_lang ? "Original 16:9" : "16:9 original"};
     monado_combo(g.ui_lang ? "Aspect ratio" : "Relación de aspecto", &g.aspect, aspects, 2);
+    ImGui::SetNextItemWidth(260 * g_scale);
+    ImGui::SliderInt(g.ui_lang ? "HUD size" : "Tamaño del HUD", &g.ui_scale, UI_SCALE_MIN, 100, "%d %%");  // GitHub #121
+    g.ui_scale = ui_scale_percent(g.ui_scale);
+    ImGui::SetItemTooltip("%s", g.ui_lang
+        ? "Shrinks the field and battle HUD towards its corners. Menus keep the game's own size.\nAlso in the game's F1 menu, Graphics tab (applies at once)."
+        : "Reduce el HUD de exploración y combate hacia sus esquinas. Los menús mantienen el tamaño del juego.\nTambién en el menú F1 del juego, pestaña Gráficos (se aplica al instante).");
     ImGui::SetNextItemWidth(260 * g_scale);
     monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, 5);
     ImGui::SeparatorText(T("Resolución y escalado"));

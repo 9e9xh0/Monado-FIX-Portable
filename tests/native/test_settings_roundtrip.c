@@ -19,9 +19,10 @@ int main(int argc, char **argv) {
           "gpu_gpl = off\ngpu_memory_budget = 0\ngpu_preset = performance\ngpu_keep_heavy = 1\n"
           "occlusion = on\namd_fix = off\nsession_fix = off\n"
           "vulkan_api = 1.2\nfps_overlay = 0\nfps_overlay_style = simple\nupscaler = auto\n"
-          "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nfuture_plugin = preserve this\n", f); fclose(f);
+          "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nui_scale = 30\nfuture_plugin = preserve this\n", f); fclose(f);
     settings_load();
     assert(g_settings.run_speed == 1.5f);  // [XCDE] GitHub #100
+    assert(g_settings.ui_scale == 50);  // [XCDE] GitHub #121: below the minimum, clamped
     assert(g_settings.res_mode == RES_1_5);
     // [XCDE] the retired effects_off AO bit moves to the single Ambient occlusion option (Off)
     assert(g_settings.graphics.value[GFX_AO] == 1 && !(g_settings.effects_off & EFFECT_TSSAO));
@@ -46,9 +47,10 @@ int main(int argc, char **argv) {
     char data[8192] = {0}; f = fopen(argv[1], "r"); assert(f);
     assert(fread(data, 1, sizeof data - 1, f)); fclose(f);
     assert(strstr(data, "future_plugin = preserve this"));
-    g_settings.res_mode = RES_1_5; g_settings.run_speed = 2.0f; settings_save();
-    g_settings.res_mode = RES_MATCH; g_settings.run_speed = 1.0f; settings_load();
+    g_settings.res_mode = RES_1_5; g_settings.run_speed = 2.0f; g_settings.ui_scale = 75; settings_save();
+    g_settings.res_mode = RES_MATCH; g_settings.run_speed = 1.0f; g_settings.ui_scale = 100; settings_load();
     assert(g_settings.res_mode == RES_1_5 && g_settings.run_speed == 2.0f);  // [XCDE] GitHub #100
+    assert(g_settings.ui_scale == 75);  // [XCDE] GitHub #121
     // [XCDE] RCAS strength: unset stays "default" (FSR 1 0.9 / FSR 3 0.3); an explicit value round-trips, 0 = off
     assert(strstr(data, "upscale_sharpness = default") && g_settings.upscale_sharpness < 0.0f);
     g_settings.upscaler = UPSCALE_FSR1; assert(xcde_sharpness(&g_settings) == 0.9f);
