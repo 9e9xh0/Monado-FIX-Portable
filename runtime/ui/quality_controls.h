@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "responsive.h"
 #include "../quality_policy.h"
+#include "../graphics_options.h"
 static inline bool monado_quality_controls(Settings *s, bool en) {
     XcdeQuality before=xcde_quality_current(s); int old_fps=s->fps, old_preset=s->quality_preset;
     int p=s->quality_preset;
@@ -41,25 +42,37 @@ static inline bool monado_quality_controls(Settings *s, bool en) {
     }
     return old_fps!=s->fps || old_preset!=s->quality_preset || !xcde_quality_equal(before,xcde_quality_current(s));
 }
-static inline void monado_effect_controls(Settings *s, bool en) {
-    if (!ImGui::CollapsingHeader(en ? "Experimental cosmetic reductions (restart)" : "Recortes decorativos experimentales (reiniciar)")) return;
-    ImGui::TextWrapped("%s",en ? "Opt-in until visual tests pass. Checked means disabled. Original files are preserved." :
-                       "Opcionales hasta completar pruebas visuales. Marcado significa desactivado. Se conservan los archivos originales.");
-    // These toggles edit lib_nx keys; gfx_ui_options shows the live per-view options with some of the same labels
-    // (e.g. "Light shafts"). Scope their IDs, or ImGui reports 2 visible items with conflicting ID.
-    ImGui::PushID("effects_off");
-    // Bit 0 (temporal AO) is not here: GFX_AO is the single Ambient occlusion control (Original / Off / On / Classic).
-    const unsigned bits[]={EFFECT_SSR,EFFECT_BLOOM,EFFECT_GODRAY,EFFECT_CLOUD_SHADOW};
-    const char *es[]={"Reflejos de pantalla", "Bloom", "Rayos de luz", "Sombras de nubes"};
-    // Bit 3 writes lib_nx godray=off: "God rays", not the per-view light_shafts option (graphics_options.h GFX_SHAFTS).
-    const char *eng[]={"Screen-space reflections", "Bloom", "God rays", "Cloud shadows"};
-    for (unsigned i=0;i<4;i++) {
-        const unsigned bit=bits[i];
-        bool off=(s->effects_off&bit)!=0;
-        if (ImGui::Checkbox(en ? eng[i] : es[i],&off)) {
-            if (off) s->effects_off|=bit; else s->effects_off&=~bit;
-            s->quality_preset=QUALITY_CUSTOM;
-        }
+// [XCDE] One combo per graphics option (graphics_options.h groups), shared by the launcher and F1: the effects that
+// used to have a second, checkbox switch under "Experimental cosmetic reductions" now live only here.
+static inline const char *monado_gfx_tooltip(int i, bool en) {
+    switch (i) {
+    case GFX_SHADOWS: return en ? "Off removes dynamic shadow shading (cloud shadows too); baked shading stays."
+                                : "Desactivado quita el sombreado dinámico (también las sombras de nubes); el sombreado precalculado se queda.";
+    case GFX_SHADOW_MAPS: return en ? "Cascade shadow-map resolution. 2048 px: four times the original texels."
+                                    : "Resolución de los mapas de sombras en cascada. 2048 px: cuatro veces los texels originales.";
+    case GFX_CLOUD: return en ? "Shadows Off takes priority over this setting." : "Sombras Desactivado tiene prioridad sobre este ajuste.";
+    case GFX_PROP_LOD: return en ? "Intermediate mesh-LOD transitions of recognized trees, ivy and rocks only; final distances stay."
+                                 : "Solo las transiciones intermedias de LOD de árboles, hiedra y rocas reconocidos; las distancias finales no cambian.";
+    case GFX_AO: return en ? "Original / Off / On: the game's temporal SSAO. Classic: its per-frame SSAO, without the faint trail\n"
+                             "behind thin objects (ropes, railings) while the camera moves."
+                           : "Original / Desactivado / Activado: el SSAO temporal del juego. Clásica: su SSAO por frame, sin la estela\n"
+                             "tenue detrás de objetos finos (cuerdas, barandillas) al mover la cámara.";
+    default: return nullptr;
     }
     ImGui::PopID();
+}
+static inline bool monado_gfx_group(GraphicsOptions *o, const int *ids, int n, bool en, float width = 0) {
+    bool changed = false;
+    for (int k = 0; k < n; k++) {
+        int i = ids[k];
+        const char *items[5];
+        for (int v = 0; v < gfx_count(i); v++) items[v] = gfx_display_lang(i, v, en);
+        if (width > 0) ImGui::SetNextItemWidth(width);
+        changed |= monado_combo(gfx_label(i, en), &o->value[i], items, gfx_count(i));
+        if (const char *tip = monado_gfx_tooltip(i, en)) ImGui::SetItemTooltip("%s", tip);
+    }
+    return changed;
+}
+template <int N> static inline bool monado_gfx_group(GraphicsOptions *o, const int (&ids)[N], bool en, float width = 0) {
+    return monado_gfx_group(o, ids, N, en, width);
 }

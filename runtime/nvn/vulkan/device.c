@@ -1397,6 +1397,7 @@ void backend_present(NvnTexture *t) {
     static long win_shot = -1;
     if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
     bool shot = win_shot && (long)total_frames + 1 == win_shot;
+    { extern void xcde_graphics_debug_frame(uint64_t); xcde_graphics_debug_frame(total_frames + 1); }  // [XCDE] XCDE_GRAPHICS_LIVE
     const char *xshot = diag_shot_path(total_frames + 1);
     extern bool diag_flicker_wanted(void);
     bool want_window = !headless || shot || xshot || diag_hash_wanted() || diag_flicker_wanted();

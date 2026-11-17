@@ -297,14 +297,17 @@ static void ui(void) {
                 ImGui::Checkbox(T("Generación de frames (FSR 3; activarla por primera vez: al reiniciar)"), &g_settings.frame_gen);
                 ImGui::EndDisabled();
             }
-            ImGui::SeparatorText(T("Calidad"));
+            // [XCDE] One place per option, grouped as in the launcher: anti-aliasing, shadows, detail, effects, indicators.
+            const bool en = g_settings.ui_lang != 0;
+            ImGui::SeparatorText("Antialiasing");
             bool smaa = g_settings.antialias == AA_SMAA;
             if (ImGui::Checkbox(T("Antialiasing SMAA"), &smaa)) g_settings.antialias = smaa ? AA_SMAA : AA_OFF;
-            bool dof = !g_settings.dof_off;
-            if (ImGui::Checkbox(T("Profundidad de campo"), &dof)) g_settings.dof_off = !dof;
             ImGui::Checkbox(T("Antialiasing y desenfoque de movimiento del juego (al reiniciar)"), &g_settings.game_blur);
             bool taa = !g_settings.taa_off;
             if (ImGui::Checkbox(T("Antialiasing temporal (TAA) del juego (al reiniciar)"), &taa)) g_settings.taa_off = !taa;
+            ImGui::SeparatorText(en ? "Shadows" : "Sombras");
+            if (monado_gfx_group(&g_settings.graphics, gfx_ui_shadows, en)) xcde_graphics_publish(&g_settings.graphics);  // (live; the ones marked "restart" apply at the next start)
+            ImGui::SeparatorText(en ? "Detail" : "Detalle");
             {   // [XCDE] grass draw distance: applied on the next foliage pass, no restart
                 const char *const *labels = g_settings.ui_lang ? grass_lod_labels : grass_lod_labels_es;
                 float grass_scale = xcde_foliage_requested_scale();
@@ -325,6 +328,14 @@ static void ui(void) {
                     : "Se aplica mientras juegas, sin reiniciar. Los valores altos mantienen la hierba visible más lejos y cuestan FPS.\n"
                       "Original conserva el detalle cercano de Alta a la distancia original del juego. Baja reduce el alcance a la mitad.");
             }
+            if (monado_gfx_group(&g_settings.graphics, gfx_ui_detail, en)) xcde_graphics_publish(&g_settings.graphics);
+            ImGui::SeparatorText(en ? "Effects" : "Efectos");
+            bool dof = !g_settings.dof_off;
+            if (ImGui::Checkbox(T("Profundidad de campo"), &dof)) g_settings.dof_off = !dof;
+            if (monado_gfx_group(&g_settings.graphics, gfx_ui_effects, en)) xcde_graphics_publish(&g_settings.graphics);
+            ImGui::TextDisabled("%s", en ? "Original keeps the game's (and mods') own values."
+                                         : "Original conserva los valores del juego (y de los mods).");
+            ImGui::SeparatorText(en ? "Indicators" : "Indicadores");
             {   // [XCDE] GitHub #39: off / simple / detailed (perf_overlay.h), live
                 const char *modes_en[] = {"Off", "Simple", "Detailed"}, *modes_es[] = {"Desactivado", "Simple", "Detallado"};
                 int mode = !g_settings.fps_overlay ? 0 : g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE ? 1 : 2;
@@ -338,19 +349,12 @@ static void ui(void) {
                     : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, tiempo y esperas de GPU, carga de GPU / CPU, memoria y resolución.");
             }
             ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g_settings.show_fps);
-            ImGui::SeparatorText(g_settings.ui_lang ? "Shadows, detail and effects" : "Sombras, detalle y efectos");  // [XCDE]
-            for (int i : gfx_ui_options) {
-                const char *items[5];
-                for (int v = 0; v < gfx_count(i); v++) items[v] = gfx_display_lang(i, v, g_settings.ui_lang);
-                if (ImGui::Combo(gfx_label(i, g_settings.ui_lang), &g_settings.graphics.value[i], items, gfx_count(i)))
-                    xcde_graphics_publish(&g_settings.graphics);  // (live; the ones marked "restart" apply at the next start)
-            }
-            ImGui::TextDisabled("%s", g_settings.ui_lang ? "Original keeps the game's (and mods') own values."
-                                                         : "Original conserva los valores del juego (y de los mods).");
             ImGui::SeparatorText(T("Velocidad"));
             if (ImGui::Checkbox(T("V-Sync (con 30 / 60 FPS)"), &g_settings.vsync)) vk_request_swapchain_recreate();
-            monado_effect_controls(&g_settings,g_settings.ui_lang!=0);
-            if (ImGui::Button(g_settings.ui_lang ? "Restore graphics" : "Restaurar gráficos")) { xcde_quality_apply(&g_settings,QUALITY_BALANCED); quality_before=g_settings; }
+            if (ImGui::Button(g_settings.ui_lang ? "Restore graphics" : "Restaurar gráficos")) {
+                xcde_quality_apply(&g_settings,QUALITY_BALANCED); quality_before=g_settings;
+                g_settings.graphics = GraphicsOptions{}; xcde_graphics_publish(&g_settings.graphics);  // (all choices to Original)
+            }
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(T("GPU / Vulkan"))) {

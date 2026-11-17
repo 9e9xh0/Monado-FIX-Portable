@@ -626,7 +626,7 @@ static void load() {
         else if (!strcmp(k, "button_icons") && (i = find(k_icon_ini, 5, v)) >= 0) g.icons = i;
     }
     fclose(f);
-    xcde_quality_migrate_ao(&g.graphics, &g.effects_off);  // [XCDE] one AO control (GFX_AO)
+    gfx_fold_effects_off(&g.graphics, &g.effects_off);  // [XCDE] the old effect checkboxes -> their Off choices
     if (layout < 2) for (int i = 0; i < NACT; i++) g.key[i] = k_def_key[i], g.key2[i] = k_def_key2[i];
 }
 
@@ -1870,23 +1870,34 @@ static void tab_graphics() {
     } else {
         ImGui::TextDisabled(T("Se aplica cuando la resolución interna es menor que la ventana."));
     }
-    ImGui::SeparatorText(T("Calidad"));
+    // [XCDE] One place per option, grouped as in Monado-Reborn: anti-aliasing, shadows, detail, effects, indicators.
+    const bool en = g.ui_lang != 0;
+    ImGui::SeparatorText("Antialiasing");
     ImGui::Checkbox(T("Antialiasing SMAA"), &g.smaa);
-    ImGui::Checkbox(T("Profundidad de campo (desenfoque del juego)"), &g.dof);
-    ImGui::SetItemTooltip(T("El desenfoque de lo cercano y lo lejano que el juego aplica también en Switch.\n"
-                          "Desactivado: toda la escena nítida (y algo menos de trabajo para la GPU)."));
     ImGui::Checkbox(T("Antialiasing y desenfoque de movimiento del juego"), &g.game_blur);
     ImGui::SetItemTooltip(T("El antialiasing temporal (TMAA), el desenfoque de movimiento y el del pelo que el juego\n"
                           "aplica para los 720p de la Switch: a 1080p o más suavizan toda la imagen.\n"
                           "Desactivado: imagen nítida (combínalo con SMAA para los bordes)."));
     ImGui::Checkbox(T("Antialiasing temporal (TAA) del juego"), &g.taa);
     ImGui::SetItemTooltip(T("Solo el TAA, sin tocar el desenfoque de movimiento ni el del pelo.\nDesactivado: quita el emborronado del TAA (combínalo con SMAA para los bordes)."));
+    ImGui::SeparatorText(en ? "Shadows" : "Sombras");
+    monado_gfx_group(&g.graphics, gfx_ui_shadows, en, 260 * g_scale);
+    ImGui::SeparatorText(en ? "Detail" : "Detalle");
     g.grass_lod = grass_lod_valid(g.grass_lod);  // [XCDE] grass draw distance (also live in F1)
     monado_combo(g.ui_lang ? "Grass distance" : "Distancia de la hierba", &g.grass_lod,
                  g.ui_lang ? grass_lod_labels : grass_lod_labels_es, GRASS_PRESET_COUNT);
     ImGui::SetItemTooltip("%s", g.ui_lang
         ? "Keeps grass visible farther away. Higher settings cost FPS. Original keeps High's nearby detail at the original distance; Low halves reach. Also live in F1."
         : "Mantiene la hierba visible más lejos. Los valores altos cuestan FPS. Original conserva el detalle cercano de Alta a la distancia original; Baja reduce el alcance a la mitad. También en vivo en F1.");
+    monado_gfx_group(&g.graphics, gfx_ui_detail, en, 260 * g_scale);
+    ImGui::SeparatorText(en ? "Effects" : "Efectos");
+    ImGui::Checkbox(T("Profundidad de campo (desenfoque del juego)"), &g.dof);
+    ImGui::SetItemTooltip(T("El desenfoque de lo cercano y lo lejano que el juego aplica también en Switch.\n"
+                          "Desactivado: toda la escena nítida (y algo menos de trabajo para la GPU)."));
+    monado_gfx_group(&g.graphics, gfx_ui_effects, en, 260 * g_scale);
+    ImGui::TextDisabled("%s", en ? "Original keeps the game's (and mods') own values. Also in F1 (live, except \"restart\")."
+                                 : "Original conserva los valores del juego (y de los mods). También en F1 (en vivo, salvo \"al reiniciar\").");
+    ImGui::SeparatorText(en ? "Indicators" : "Indicadores");
     {   // [XCDE] GitHub #39: off / simple (FPS + frame time) / detailed (frame-time graph, lows, GPU / CPU / memory)
         const char *modes_en[] = {"Off", "Simple", "Detailed"}, *modes_es[] = {"Desactivado", "Simple", "Detallado"};
         int mode = !g.fps_overlay ? 0 : g.fps_overlay_style == 1 ? 1 : 2;
@@ -1898,19 +1909,6 @@ static void tab_graphics() {
                                               : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, carga de GPU y CPU, memoria y resolución.");
     }
     ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g.show_fps);
-    ImGui::SeparatorText(g.ui_lang ? "Shadows, detail and effects" : "Sombras, detalle y efectos");  // [XCDE]
-    for (int i : gfx_ui_options) {
-        const char *items[5];
-        for (int v = 0; v < gfx_count(i); v++) items[v] = gfx_display_lang(i, v, g.ui_lang);
-        ImGui::SetNextItemWidth(260 * g_scale);
-        monado_combo(gfx_label(i, g.ui_lang), &g.graphics.value[i], items, gfx_count(i));
-        if (i == GFX_SHADOWS) ImGui::SetItemTooltip("%s", g.ui_lang ? "Off removes dynamic shadow shading (cloud shadows too); baked shading stays."
-                                                                   : "Desactivado quita el sombreado dinámico (también las sombras de nubes); el sombreado precalculado se queda.");
-        if (i == GFX_PROP_LOD) ImGui::SetItemTooltip("%s", g.ui_lang ? "Intermediate mesh-LOD transitions of recognized trees, ivy and rocks only; final distances stay."
-                                                                    : "Solo las transiciones intermedias de LOD de árboles, hiedra y rocas reconocidos; las distancias finales no cambian.");
-    }
-    ImGui::TextDisabled("%s", g.ui_lang ? "Original keeps the game's (and mods') own values. Also in F1 (live, except \"restart\")."
-                                        : "Original conserva los valores del juego (y de los mods). También en F1 (en vivo, salvo \"al reiniciar\").");
     ImGui::SeparatorText(T("Velocidad"));
     ImGui::Checkbox(T("V-Sync (con 30 / 60 FPS)"), &g.vsync);
     ImGui::SetItemTooltip(T("Cada imagen se muestra exactamente una vez, sincronizada con la pantalla: movimiento\n"
@@ -1923,10 +1921,11 @@ static void tab_graphics() {
                           "30 estables: las cinemáticas van a 30 parejos, cámara y personajes juntos (con V-Sync en un\n"
                           "monitor de 60 Hz cada imagen dura exactamente dos refrescos).\n"
                           "Con 'Generación de frames solo en cinemáticas' también van a 30, con generación encima."));
-    editable=quality_settings(); monado_effect_controls(&editable,g.ui_lang!=0); quality_from_settings(editable);
+    editable=quality_settings();
     if (g.quality_preset==preset_before && !xcde_quality_equal(before,xcde_quality_current(&editable))) g.quality_preset=QUALITY_CUSTOM;
     if (ImGui::Button(g.ui_lang ? "Restore graphics" : "Restaurar gráficos")) {
         xcde_quality_apply(&editable,QUALITY_BALANCED); quality_from_settings(editable);
+        g.graphics = GraphicsOptions{};  // (every shadow / detail / effect choice back to Original)
     }
 
 }

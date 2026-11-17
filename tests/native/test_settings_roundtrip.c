@@ -38,8 +38,10 @@ int main(int argc, char **argv) {
     assert(g_settings.gpu_uuid[0] && g_settings.gpu_index == 1 && g_settings.stick_deadzone == 0);
     assert(g_settings.vulkan_api == 12 && !g_settings.fps_overlay && !g_settings.upscaler_auto);
     assert(g_settings.quality_preset==QUALITY_POTATO && g_settings.gpu_performance);
-    assert(g_settings.dynamic_min_height==360 && g_settings.dynamic_max_height==540 && g_settings.effects_off==EFFECT_SSR);
-    assert(g_settings.graphics.value[GFX_AO] == 1);  // migrated AO choice survives the round-trip
+    assert(g_settings.dynamic_min_height==360 && g_settings.dynamic_max_height==540);
+    // [XCDE] the old effect checkbox mask folds into the graphics choices at load (graphics_options.h)
+    // (GFX_AO is 1 from the effects_off = 1 written above: #130's AO migration, now part of the general fold)
+    assert(!g_settings.effects_off && g_settings.graphics.value[GFX_REFLECTIONS]==1 && g_settings.graphics.value[GFX_AO]==1);
     char data[8192] = {0}; f = fopen(argv[1], "r"); assert(f);
     assert(fread(data, 1, sizeof data - 1, f)); fclose(f);
     assert(strstr(data, "future_plugin = preserve this"));

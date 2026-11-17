@@ -113,3 +113,30 @@ static void prop_lod_locked(uint64_t data,uint32_t size) {
 void xcde_prop_lod(uint64_t data,uint32_t size) {
     pthread_mutex_lock(&prop_mutex);prop_lod_locked(data,size);pthread_mutex_unlock(&prop_mutex);
 }
+
+// [XCDE] Live-toggle test hook: XCDE_GRAPHICS_LIVE="<frame>:<key>=<value>[;<key>=<value>],<frame>:..." publishes graphics
+// choices at those presented frames (keys/values as in xcde.ini, e.g. 2900:bloom=off,3000:bloom=original), the same
+// path the F1 menu takes. With XCDE_DETERMINISTIC + XCDE_SHOTS it checks an option really applies while playing.
+void xcde_graphics_debug_frame(uint64_t frame) {
+    static int parsed; static char spec[1024];
+    if (!parsed) { parsed = 1; const char *e = getenv("XCDE_GRAPHICS_LIVE"); snprintf(spec, sizeof spec, "%s", e ? e : ""); }
+    if (!*spec) return;
+    for (const char *tok = spec; *tok; ) {  // (hand-split: strtok_r is not in C11 nor in every Windows CRT)
+        size_t len = strcspn(tok, ",");
+        char item[256]; snprintf(item, sizeof item, "%.*s", (int)(len < sizeof item ? len : sizeof item - 1), tok);
+        tok += len + (tok[len] == ',');
+        char *colon = strchr(item, ':');
+        if (!colon || strtoull(item, NULL, 10) != frame) continue;
+        GraphicsOptions o = {0};
+        uint64_t bits = atomic_load_explicit(&request, memory_order_acquire);
+        for (int i = 0; i < GFX_COUNT; i++) o.value[i] = gfx_value(bits, i);
+        for (char *kv = colon + 1; kv && *kv; ) {
+            char *next = strchr(kv, ';'); if (next) *next++ = 0;
+            char *eq = strchr(kv, '=');
+            if (eq) { *eq = 0; gfx_load_key(&o, kv, eq + 1); }
+            kv = next;
+        }
+        xcde_graphics_publish(&o);
+        fprintf(stderr, "[graphics-live] frame %llu: options=%llx\n", (unsigned long long)frame, (unsigned long long)gfx_pack(&o));
+    }
+}
