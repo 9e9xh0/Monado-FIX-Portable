@@ -1,11 +1,22 @@
 // Included as a C string in generated GLSL for scaled guest-texel gathers.
 // Each component samples the centre of a guest texel, preserving the gather
 // ordering (bottom-left, bottom-right, top-right, top-left) after scaling.
-// s = rscale[1 + unit]: xy the texture's scale, w = 1 on depth textures (#96: plain gather, own physical 2x2).
+// s = rscale[1 + unit]: xy the texture's scale; w = 1: plain gather, own physical 2x2 (#96 depth, the #96 half-res
+// grid); w = 2: per-pixel content at a fractional scale (#120): each guest centre is interpolated from the physical
+// texels around it instead of taking the nearest one, whose offset alternates from cell to cell.
 static const char scaled_gather_glsl[] =
+"float rgather_at(sampler2D t, vec2 q, int component) {\n"
+" vec2 f = q - 0.5, w = f - floor(f);\n"
+" ivec2 i = ivec2(floor(f)), m = textureSize(t, 0) - 1;\n"
+" float a = texelFetch(t, clamp(i, ivec2(0), m), 0)[component];\n"
+" float b = texelFetch(t, clamp(i + ivec2(1, 0), ivec2(0), m), 0)[component];\n"
+" float c = texelFetch(t, clamp(i + ivec2(0, 1), ivec2(0), m), 0)[component];\n"
+" float d = texelFetch(t, clamp(i + ivec2(1, 1), ivec2(0), m), 0)[component];\n"
+" return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);\n"
+"}\n"
 "vec4 rgather(sampler2D t, vec2 uv, vec4 s, int component) {\n"
 " vec2 sc = s.xy;\n"
-" if (sc == vec2(1.0) || s.w > 0.5) {\n"
+" if (sc == vec2(1.0) || (s.w > 0.5 && s.w < 1.5)) {\n"
 "  if (component == 0) return textureGather(t, uv, 0);\n"
 "  if (component == 1) return textureGather(t, uv, 1);\n"
 "  if (component == 2) return textureGather(t, uv, 2);\n"
@@ -13,6 +24,9 @@ static const char scaled_gather_glsl[] =
 " }\n"
 " vec2 size = vec2(textureSize(t, 0));\n"
 " vec2 base = floor(uv * size / sc - 0.5);\n"
+" if (s.w > 1.5)\n"
+"  return vec4(rgather_at(t, (base + vec2(0.5, 1.5)) * sc, component), rgather_at(t, (base + vec2(1.5, 1.5)) * sc, component),\n"
+"              rgather_at(t, (base + vec2(1.5, 0.5)) * sc, component), rgather_at(t, (base + vec2(0.5, 0.5)) * sc, component));\n"
 " vec2 p0 = (floor((base + vec2(0.5, 1.5)) * sc) + 0.5) / size;\n"
 " vec2 p1 = (floor((base + vec2(1.5, 1.5)) * sc) + 0.5) / size;\n"
 " vec2 p2 = (floor((base + vec2(1.5, 0.5)) * sc) + 0.5) / size;\n"

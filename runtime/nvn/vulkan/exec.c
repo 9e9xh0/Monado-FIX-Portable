@@ -1467,25 +1467,15 @@ static bool ti_presented;              // texture_info's last answer
 static uint32_t ti_alloc[2];
 static int g_draw_wide_remap;          // the wide-box classification's verdict for the current draw: 1 = non-composite
 
-// [XCDE] GitHub #120: #96's own-pixel depth gather needs an integer render scale. The half-res depth it builds is
-// read back by passes that still sample guest-texel centres; at an integer scale those centres sit at the same place
-// in every cell, but at a fractional one (1.5x: 1080p from 720p) they skip every third physical texel, and per-pixel
-// depth turned that into a fixed grid over sunlit surfaces. Fractional scales keep the guest-texel path, as with
-// XCDE_RGATHER_DEPTH=1 (confirmed gridless by the reporter); integer scales keep #96 unchanged.
-// XCDE_RGATHER_DEPTH_ALL=1: own pixels at every scale (#96 as merged).
-static bool depth_gather_own_pixels(const float sc[2]) {
-    static int all = -1;
-    if (all < 0) { const char *e = getenv("XCDE_RGATHER_DEPTH_ALL"); all = e && *e == '1'; }
-    bool own = all || (sc[0] == floorf(sc[0]) && sc[1] == floorf(sc[1]));
-    static int nlog;
-    static float seen[8][2];
-    bool dup = false;
-    for (int i = 0; i < nlog && !dup; i++) dup = seen[i][0] == sc[0] && seen[i][1] == sc[1];
-    if (!dup && nlog < 8) {
-        seen[nlog][0] = sc[0]; seen[nlog][1] = sc[1]; nlog++;
-        LOG("[gather] depth textures at scale %.3fx%.3f: %s\n", sc[0], sc[1], own ? "own pixels" : "guest texels");
-    }
-    return own;
+// [XCDE] GitHub #120: rgather's guest-texel gather on a non-depth texture at a fractional scale reads each guest
+// centre by interpolation (rscale[1 + unit].w = 2, scaled_gather.h), not from the nearest physical texel. At 1.5x
+// the nearest texel's offset from the centre alternates from cell to cell; since #96 the half-res depth holds a value
+// per physical pixel, and the shadow mask's dithered depth compare turned that alternation into a grid over sunlit
+// surfaces. Integer scales land on texel centres and keep the nearest read. XCDE_RGATHER_LERP=0: nearest everywhere.
+static bool rgather_lerp(const float sc[2]) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_RGATHER_LERP"); on = !(e && *e == '0'); }
+    return on && (sc[0] != floorf(sc[0]) || sc[1] != floorf(sc[1]));
 }
 
 // ================================================================== render passes
@@ -5539,7 +5529,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             {   // [XCDE] #96: XCDE_RGATHER_DEPTH=1 keeps the guest-texel gather on depth textures too (the old behaviour)
                 static int guest = -1;
                 if (guest < 0) { const char *g = getenv("XCDE_RGATHER_DEPTH"); guest = g && *g == '1'; }
-                ti_depth = !guest && renderer_format_is_depth(e->tex->format) && depth_gather_own_pixels(sc);  // #120
+                ti_depth = !guest && renderer_format_is_depth(e->tex->format);
             }
             TexBackend *tb = (TexBackend *)e->tex->backend;
             ti_presented = tb && tb->presented;
@@ -5738,6 +5728,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             for (int t = 0; t < si->ntex && t < 64; t++) {
                 rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; rs[1 + t][2] = tex_d16[sg][t];
                 rs[1 + t][3] = tex_depth[sg][t];  // [XCDE] #96: rgather's depth flag
+                if (!tex_depth[sg][t] && rgather_lerp(tex_sc[sg][t])) rs[1 + t][3] = 2;  // [XCDE] #120
                 if (stage == 1 && g_hr.on && g_hr.vs_hit && si->tex[t].scaled_gather && tex_wh[sg][t][0] == g_hr.w &&
                     tex_wh[sg][t][1] == g_hr.h && tex_sc[sg][t][0] == g_hr.sx && tex_sc[sg][t][1] == g_hr.sy)
                     rs[1 + t][3] = 1;  // (the half-res grid now runs at its physical size: its own texels)
