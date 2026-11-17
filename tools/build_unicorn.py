@@ -83,9 +83,12 @@ def fetch_source(work):
 
 
 def apply_patches(src):
-    # git apply works outside a repository (the work folder is a temporary one, never inside this checkout).
+    # git apply works outside a repository (the work folder is a temporary one, never inside this checkout). The
+    # patches are applied with LF line endings whatever the checkout did to them (core.autocrlf on Windows runners).
     for patch in PATCHES:
-        run(['git', 'apply', '--verbose', str(patch)], cwd=src)
+        normalized = src.parent / patch.name
+        normalized.write_bytes(patch.read_bytes().replace(b'\r\n', b'\n'))
+        run(['git', 'apply', '--verbose', str(normalized)], cwd=src)
 
 
 def build(out):
