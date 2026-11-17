@@ -17,6 +17,9 @@ option(MONADO_RUNTIME_ONLY "Compile the runtime only (no generated game code, no
 # Release packages (docs/BUILD-CMAKE.md): the executable holds no game code. It loads lasgame.so / lasgame.dll, which
 # the launcher builds once from the player's own dump (tools/gamebuild.py); nothing derived from the game ships.
 option(MONADO_RELEASE "Runtime without game code: loads the game library the launcher builds on first start" OFF)
+# GitHub #119: the version the launcher shows and compares with the latest GitHub release (the release workflow passes
+# the tag's version; "dev" = a local build, which checks only when asked)
+set(MONADO_VERSION "dev" CACHE STRING "Package version shown by the launcher's update check")
 if(CMAKE_C_COMPILER MATCHES "zig")
   set(MONADO_ZIG ON)
   set(MARCH -march=x86_64_v2)   # (zig's CPU model name)
@@ -257,3 +260,4 @@ target_compile_options(monado_launcher PRIVATE ${LAUNCHER_FLAGS})
 target_include_directories(monado_launcher PRIVATE ${IMGUI} ${IMGUI}/backends)
 target_link_libraries(monado_launcher PRIVATE ${LAUNCHER_LIBS})
 target_link_options(monado_launcher PRIVATE ${LAUNCHER_LINK_OPTIONS})
+target_compile_definitions(monado_launcher PRIVATE MONADO_VERSION="${MONADO_VERSION}")
