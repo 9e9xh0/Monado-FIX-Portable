@@ -1485,3 +1485,17 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   el dump de referencia. Pruebas: `tests/unit/test_check_dump.py` (variante aceptada con aviso, archivo ausente
   rechazado, modo estricto rechaza) y `tools/extract/check_dump.py targets` sigue OK con el dump de referencia.
   Hecho cuando: un dump de otra región con build-ids 2.0.0 compila y arranca (pendiente de confirmación del reportero).
+
+## Velocidad al correr — 2026-11-17 (T270)
+
+- [x] T270 **GitHub #100: modificador de velocidad al correr (x1.5 / x2).** xc2-recomp no lo tiene (sólo una tecla de
+  caminar que baja el stick del teclado y cheats genéricos); Monado-II tiene la ranura Quick Step extra, pero usa el
+  tope normal del juego (~+25 %) y no sirve para x1.5/x2. Implementado en el port: `run_speed` en `xcde.ini`
+  (`1.00`, `1.50`, `2.00`), combo en la pestaña Trucos del launcher y del menú F1. `runtime/hle/party.c`
+  (`run_speed_tick`) toma la posición del líder (el mismo escáner del mod de party), añade el delta horizontal extra a
+  la entidad (+0x110) y a la posición del componente de movimiento (objeto de personaje +0x1a38, +0x50/+0x78/+0xa0),
+  para que el juego siga resolviendo suelo/colisiones desde el estado modificado; no toca la Y (saltos/caídas) ni se
+  aplica en menús, escenas o teletransportes (>2 uds/frame). `XCDE_RUN_SCALE` queda como override de tests.
+  Pruebas: `test_settings_roundtrip.c` (1.5 de entrada, 2.0 tras guardar/cargar), build Linux completo; el
+  mantenedor confirma en juego que el personaje corre rápido con x2. Animaciones a ritmo original (puede haber algo
+  de deslizamiento de pies).
