@@ -626,6 +626,7 @@ static void load() {
         else if (!strcmp(k, "button_icons") && (i = find(k_icon_ini, 5, v)) >= 0) g.icons = i;
     }
     fclose(f);
+    xcde_quality_migrate_ao(&g.graphics, &g.effects_off);  // [XCDE] one AO control (GFX_AO)
     if (layout < 2) for (int i = 0; i < NACT; i++) g.key[i] = k_def_key[i], g.key2[i] = k_def_key2[i];
 }
 

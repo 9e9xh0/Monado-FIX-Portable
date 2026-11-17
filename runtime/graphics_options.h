@@ -111,7 +111,8 @@ static inline const char *gfx_display_lang(int i, int v, int en) {
     if (i == GFX_FILTERING) return gfx_display(i, v);
     return i == GFX_SHADOW_MASK || i == GFX_EFFECTS_RES ? full[v] : tri[v];
 }
-// The options this adds next to the game effects the launcher already toggles (SSAO, SSR, bloom, god rays, cloud
-// shadows: quality_policy.h effects_off), in display order. The others stay available as xcde.ini keys.
+// The options shown in the launcher / F1 menu, in display order. The effect toggles in quality_controls.h keep the
+// lib_nx SSR / bloom / god rays / cloud shadows switches; AO is shown here only (Original / Off / On / Classic), so
+// there is a single Ambient occlusion control. The others stay available as xcde.ini keys.
 static const int gfx_ui_options[] = {GFX_SHADOWS, GFX_SHADOW_MAPS, GFX_SHADOW_MASK, GFX_AO, GFX_PROP_LOD, GFX_FILTERING,
                                      GFX_SHAFTS, GFX_MOTION_BLUR, GFX_FUR_BLUR};

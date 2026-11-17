@@ -19,9 +19,11 @@ int main(int argc, char **argv) {
           "gpu_gpl = off\ngpu_memory_budget = 0\ngpu_preset = performance\ngpu_keep_heavy = 1\n"
           "occlusion = on\namd_fix = off\nsession_fix = off\n"
           "vulkan_api = 1.2\nfps_overlay = 0\nfps_overlay_style = simple\nupscaler = auto\n"
-          "stick_deadzone = 20\nfuture_plugin = preserve this\n", f); fclose(f);
+          "stick_deadzone = 20\neffects_off = 1\nfuture_plugin = preserve this\n", f); fclose(f);
     settings_load();
     assert(g_settings.res_mode == RES_1_5);
+    // [XCDE] the retired effects_off AO bit moves to the single Ambient occlusion option (Off)
+    assert(g_settings.graphics.value[GFX_AO] == 1 && !(g_settings.effects_off & EFFECT_TSSAO));
     assert(!strcmp(g_settings.gpu_uuid, "0123456789abcdef0123456789abcdef"));
     assert(g_settings.gpu_index == 1 && g_settings.gpu_profile == GPU_PROFILE_COMPATIBILITY);
     assert(g_settings.gpu_gpl == GPU_GPL_OFF && !g_settings.gpu_memory_budget);
@@ -37,6 +39,7 @@ int main(int argc, char **argv) {
     assert(g_settings.vulkan_api == 12 && !g_settings.fps_overlay && !g_settings.upscaler_auto);
     assert(g_settings.quality_preset==QUALITY_POTATO && g_settings.gpu_performance);
     assert(g_settings.dynamic_min_height==360 && g_settings.dynamic_max_height==540 && g_settings.effects_off==EFFECT_SSR);
+    assert(g_settings.graphics.value[GFX_AO] == 1);  // migrated AO choice survives the round-trip
     char data[8192] = {0}; f = fopen(argv[1], "r"); assert(f);
     assert(fread(data, 1, sizeof data - 1, f)); fclose(f);
     assert(strstr(data, "future_plugin = preserve this"));
