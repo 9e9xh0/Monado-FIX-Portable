@@ -21,6 +21,7 @@ from analyze import eh_frame_functions
 from lifter import Insn, Lifter, Unsupported, bits, emit_asm_batch, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
 from patchfmt import JumpTable
+import flags  # noqa: E402  (function-local NZCV, from TotK Recomp)
 
 SCRATCH_MEM = 0x7300000000
 
@@ -364,6 +365,46 @@ class Module:
             return ['return;']
         raise Unsupported(k)
 
+    def flow(self, insns, entry, end, tables):
+        """Successors of each instruction inside the function [entry, end); index len(insns) stands for falling
+        through into the next function and has none (TotK Recomp's flow(), without patched sites)."""
+        def idx(t):
+            return [(t - entry) // 4] if isinstance(t, int) and entry <= t < end else []
+
+        succ = []
+        for i, ins in enumerate(insns):
+            k = ins.kind
+            if k in ('op', 'bl', 'blr'):
+                s = [i + 1]
+            elif k == 'b':
+                s = idx(ins.target)
+            elif k == 'bcond':
+                s = idx(ins.target) + [i + 1]
+            elif k == 'br':
+                jt = tables.get(entry + 4 * i)
+                s = [t for x in jt for t in idx(x)] if jt and jt != 'all' else []
+            else:
+                s = []   # ret, trap
+            succ.append(s)
+        succ.append([])
+        return succ
+
+    def flag_plan(self, insns, entry, end, tables):
+        """tools/lifter/flags.py plan for the function: each instruction's flag use over its control flow."""
+        n = len(insns)
+        calls, effects, exits = set(), [], {n}
+        for i, ins in enumerate(insns):
+            k = ins.kind
+            if k in ('bl', 'blr'):
+                calls.add(i)
+            elif k in ('b', 'bcond') and not (isinstance(ins.target, int) and entry <= ins.target < end):
+                exits.add(i)
+            elif k == 'br':
+                exits.add(i)   # through rt_dispatch, also a jump table's external cases and its default
+            effects.append(flags.effect(ins.cond if k == 'bcond' else ins.code or ''))
+        effects.append((False, None))
+        return flags.plan(effects, self.flow(insns, entry, end, tables), calls, exits)
+
     def emit_function(self, entry, end, labels, tables, hle):
         # [XCDE] T165: `restrict`: inside a lifted function the Cpu is reached only through c, never through a guest
         # pointer, so the compiler may keep registers / flags in host registers across guest loads and stores (it had to
@@ -383,13 +424,18 @@ class Module:
                 out.append('    ' + emit_asm_batch(batch))
                 batch.clear()
 
-        def jump(t):
+        fp = None   # function-local flags plan (set below)
+
+        def publish(i):
+            return fp.publish(i) if fp is not None and i is not None else ''
+
+        def jump(t, i=None):
             if entry <= t < end:
                 return f'goto L_{t:x};'
             if not self.in_text(t):
-                return f'c->pc = {hx(t)}; __attribute__((musttail)) return rt_dispatch(c);'
+                return f'{publish(i)}c->pc = {hx(t)}; __attribute__((musttail)) return rt_dispatch(c);'
             refs.add(t)
-            return f'__attribute__((musttail)) return {fname(t)}(c);'
+            return f'{publish(i)}__attribute__((musttail)) return {fname(t)}(c);'
 
         # Functions with jump tables also get the all-instruction fallback: a table whose emulation
         # missed some cases then still reaches the right instruction instead of aborting.
@@ -406,9 +452,38 @@ class Module:
                     v = self.lifter.lift(w, a)
                     if v.kind in ('b', 'bcond') and isinstance(v.target, int) and entry <= v.target < end:
                         labels.add(v.target)
+        # Function-local NZCV (tools/lifter/flags.py, after TotK Recomp): flags live in a local `Flags F` and reach
+        # c->nzcv only where the function leaves other than by a call or a return. Functions re-entered through the
+        # all-instruction dispatch, patched or randomizer sites and inline-asm batches keep them in c->nzcv.
+        insns = [self.lift(a) for a in range(entry, end, 4)]
+        rewritten = {}
+        if (not all_labels and not rando_here and not any(i.kind == 'asm' for i in insns)
+                and not any(a in PATCHES and not isinstance(PATCHES[a], JumpTable) for a in range(entry, end, 4))):
+            try:
+                plan = self.flag_plan(insns, entry, end, tables)
+                if plan.used:
+                    for i, ins in enumerate(insns):
+                        if ins.kind in ('op', 'trap'):
+                            rewritten[i] = plan.rewrite(i, ins.code)
+                        elif ins.kind == 'bcond':
+                            rewritten[i] = plan.rewrite(i, ins.cond)
+                    fp = plan
+                    out.append('    ' + plan.decl())
+                    self.stats['flags_local_functions'] += 1
+                    self.stats['flags_reads_direct'] += sum(1 for k in plan.reader if k and k != 'nz')
+                    self.stats['flags_reads_packed'] += sum(1 for k in plan.reader if k == 'nz')
+                    self.stats['flags_publishing_exits'] += sum(1 for k in plan.exit if k)
+            except flags.FlagError as error:
+                rewritten = {}
+                self.stats['flags_fallback'] += 1
+        elif any(i.kind != 'asm' and flags.effect(i.cond if i.kind == 'bcond' else i.code or '') != (False, None)
+                 for i in insns):
+            self.stats['flags_kept_in_cpu'] += 1
+
         last = None
         for a in range(entry, end, 4):
-            ins = self.lift(a)
+            ins = insns[(a - entry) // 4]
+            i = (a - entry) // 4
             if a in labels:
                 flush()
                 out.append(f'L_{a:x}:;')
@@ -443,11 +518,11 @@ class Module:
                 continue
             flush()
             if k == 'op' or k == 'trap':
-                out.append('    ' + ins.code)
+                out.append('    ' + rewritten.get(i, ins.code))
             elif k == 'b':
-                out.append('    ' + jump(ins.target))
+                out.append('    ' + jump(ins.target, i))
             elif k == 'bcond':
-                out.append(f'    if ({ins.cond}) {{ {jump(ins.target)} }}')
+                out.append(f'    if ({rewritten.get(i, ins.cond)}) {{ {jump(ins.target, i)} }}')
             elif k == 'bl':
                 t = ins.target
                 if self.in_text(t):
@@ -463,20 +538,20 @@ class Module:
                     out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     continue
                 if jt:
-                    cases = ' '.join(f'case {hx(t)}: {jump(t)}' for t in jt)
+                    cases = ' '.join(f'case {hx(t)}: {jump(t, i)}' for t in jt)
                     out.append(f'    switch ({ins.target}) {{ {cases} default: break; }}')
                     if all_labels:
                         out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     else:
-                        out.append(f'    c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);')
+                        out.append(f'    {publish(i)}c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);')
                     continue
-                out.append(f'    c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);')
+                out.append(f'    {publish(i)}c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);')
             elif k == 'ret':
                 out.append('    return;')
             last = k
         flush()
         if last not in ('b', 'br', 'ret', 'trap'):
-            out.append('    ' + jump(end) if end < self.hi else f'    rt_udf(c, {hx(end)});')
+            out.append('    ' + jump(end, len(insns)) if end < self.hi else f'    rt_udf(c, {hx(end)});')
         if all_labels:
             out.append('L_dispatch:')
             cases = ' '.join(f'case {hx(t)}: goto L_{t:x};' for t in range(entry, end, 4))
