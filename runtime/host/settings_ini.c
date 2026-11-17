@@ -16,7 +16,7 @@ const char *const g_language_codes[N_LANGUAGES] = {"", "ja", "en-US", "fr", "de"
 const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English", "French", "German", "Italian", "Spanish",
                                                    "Chinese", "Korean", "Dutch", "Portuguese", "Russian",
                                                    "Chinese (Simplified)", "Chinese (Traditional)"};
-Settings g_settings = {.fps = 30, .fps_overlay = true, .upscaler_auto = true, .volume = 1.0f, .movie_audio = true, .res_mode = RES_MATCH, .upscaler = UPSCALE_FSR1, .upscale_quality = UQ_QUALITY, .upscale_sharpness = -1.0f, .game_blur = true, .vsync = true, .ui_lang = 1, .gpu_index = -1, .gpu_profile = GPU_PROFILE_AUTO, .gpu_gpl = GPU_GPL_AUTO, .occlusion = OCCL_AUTO, .amd_fix = AMD_FIX_AUTO, .session_fix = SESSION_FIX_AUTO, .gpu_memory_budget = true, .input_rumble = true, .grass_lod = GRASS_DEFAULT};
+Settings g_settings = {.fps = 30, .fps_overlay = true, .upscaler_auto = true, .volume = 1.0f, .movie_audio = true, .res_mode = RES_MATCH, .upscaler = UPSCALE_FSR1, .upscale_quality = UQ_QUALITY, .upscale_sharpness = -1.0f, .game_blur = true, .vsync = true, .ui_lang = 1, .gpu_index = -1, .gpu_profile = GPU_PROFILE_AUTO, .gpu_gpl = GPU_GPL_AUTO, .occlusion = OCCL_AUTO, .amd_fix = AMD_FIX_AUTO, .session_fix = SESSION_FIX_AUTO, .gpu_memory_budget = true, .input_rumble = true, .grass_lod = GRASS_DEFAULT, .run_speed = 1.0f};
 int g_window_w = 1280, g_window_h = 720;  // windowed size (settings.h)
 
 // [XCDE] Mods (runtime/services/romfs_virtual.c): xcde.ini `mod_<folder> = 0/1`; a folder not listed is on.
@@ -119,6 +119,10 @@ void settings_load(void) {
         else if (!strcmp(k, "launcher_lang")) g_settings.ui_lang = !strcmp(v, "es") ? 0 : 1;
         else if (!strcmp(k, "stick_deadzone")) { int d = atoi(v); g_settings.stick_deadzone = d < 0 ? 0 : d > 30 ? 30 : d; }
         else if (!strcmp(k, "party_switch")) g_party_switch = atoi(v) != 0;  // [XCDE] party mod (runtime/hle/party.c)
+        else if (!strcmp(k, "run_speed")) {  // [XCDE] GitHub #100: player movement multiplier
+            float x = (float)atof(v);
+            g_settings.run_speed = x < 1.0f ? 1.0f : x > 2.0f ? 2.0f : x;
+        }
         else if (!strcmp(k, "volume")) g_settings.volume = (float)atof(v) / 100.0f;
         else if (!strcmp(k, "movie_audio")) g_settings.movie_audio = atoi(v) != 0;
         else if (!strcmp(k, "show_fps")) g_settings.show_fps = atoi(v) != 0;
@@ -185,6 +189,7 @@ void settings_save(void) {
     fprintf(f, "grass_lod = %s\n", grass_lod_ini[grass_lod_valid(g_settings.grass_lod)]);  // [XCDE]
     gfx_save(f, &g_settings.graphics);  // [XCDE]
     fprintf(f, "party_switch = %d\n", g_party_switch);
+    fprintf(f, "run_speed = %.2f\n", g_settings.run_speed);
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g_settings.vulkan_api == 12 ? "1.2" : g_settings.vulkan_api == 13 ? "1.3" : g_settings.vulkan_api == 14 ? "1.4" : "auto", g_settings.fps_overlay);
     fprintf(f, "fps_overlay_style = %s\n", g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE ? "simple" : "detailed");
     fprintf(f, "gpu_uuid = %s\ngpu_preset = %s\ngpu_keep_heavy = %d\n", g_settings.gpu_uuid,

@@ -59,6 +59,7 @@ typedef struct {
     int fps;  // [XCDE] frame rate target: 30 (the game's own), 60, 120, 144..., 0 = unlimited (runtime/hle/framepace.c)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
+    float run_speed;     // [XCDE] GitHub #100: player movement multiplier (1.0 original, 1.5, 2.0): runtime/hle/party.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c

@@ -357,8 +357,26 @@ static bool switch_leader(Cpu *c, int step, uint64_t frame) {
     return true;
 }
 
-// (tests) Each deployed member's position: field group slot i -> entity handle -> its object (f_700049f8c0, as the game
-// resolves it) -> vtable +0x38 -> the entity, position at +0x110.
+// Field group slot -> entity handle -> its character object (f_700049f8c0, as the game resolves it) -> vtable +0x38 ->
+// the entity. 0 when the slot is empty or not a character (the game's entity handles also name other object kinds).
+// obj_out / handle_out (optional) get the character object and the entity handle, for diagnostics.
+static uint64_t slot_entity(Cpu *c, uint64_t fo, uint64_t g, uint64_t i, uint64_t *obj_out, uint32_t *handle_out) {
+    uint64_t vt = *(volatile uint64_t *)(uintptr_t)g;
+    uint64_t e = call_guest(c, *(volatile uint64_t *)(uintptr_t)(vt + 0x40), g, i);
+    uint32_t h = e ? *(volatile uint32_t *)(uintptr_t)e : 0;
+    if (handle_out) *handle_out = h;
+    if (obj_out) *obj_out = 0;
+    if (!h) return 0;
+    uint64_t scratch = ((c->sp - 0x100) & ~15ull);
+    memset((void *)(uintptr_t)scratch, 0, 0x20);
+    call_guest3(c, 0x700049f8c0ull, scratch, fo + 0x20, h);
+    uint64_t obj = *(volatile uint64_t *)(uintptr_t)scratch;
+    if (!obj || *(volatile uint64_t *)(uintptr_t)obj != CHARA_OBJ_VTABLE) return 0;
+    if (obj_out) *obj_out = obj;
+    return call_guest(c, *(volatile uint64_t *)(uintptr_t)(CHARA_OBJ_VTABLE + 0x38), obj, 0);
+}
+
+// (tests) Each deployed member's position: field group slot i -> entity -> position at +0x110.
 static void party_probe(Cpu *c, uint64_t frame) {
     Found f;
     found_get(&f);
@@ -368,18 +386,68 @@ static void party_probe(Cpu *c, uint64_t frame) {
     uint64_t vt = *(volatile uint64_t *)(uintptr_t)g;
     uint64_t n = (uint32_t)call_guest(c, *(volatile uint64_t *)(uintptr_t)(vt + 0x18), g, 0);
     for (uint64_t i = 0; i < n && i < 3; i++) {
-        uint64_t e = call_guest(c, *(volatile uint64_t *)(uintptr_t)(vt + 0x40), g, i);
-        uint32_t h = e ? *(volatile uint32_t *)(uintptr_t)e : 0;
-        if (!h) continue;
-        uint64_t scratch = ((c->sp - 0x100) & ~15ull);
-        memset((void *)(uintptr_t)scratch, 0, 0x20);
-        call_guest3(c, 0x700049f8c0ull, scratch, fo + 0x20, h);
-        uint64_t obj = *(volatile uint64_t *)(uintptr_t)scratch;
-        if (!obj || *(volatile uint64_t *)(uintptr_t)obj != CHARA_OBJ_VTABLE) continue;
-        uint64_t ent = call_guest(c, *(volatile uint64_t *)(uintptr_t)(CHARA_OBJ_VTABLE + 0x38), obj, 0);
+        uint32_t h = 0;
+        uint64_t ent = slot_entity(c, fo, g, i, NULL, &h);
+        if (!ent) continue;
         const float *pos = (const float *)(uintptr_t)(ent + 0x110);
         LOG("[party] pos f%llu slot %llu h %#x %.2f %.2f %.2f\n", (unsigned long long)frame, (unsigned long long)i, h, pos[0], pos[1], pos[2]);
     }
+}
+
+// [XCDE] run speed multiplier (GitHub #100). The game's movement is collision-resolved before this runs (the pad read
+// happens at the start of a frame), so the extra distance is applied to the position the game will move from; its own
+// collision/ground handling still runs. Off by default: XCDE_RUN_SCALE (1.0 = original, for tests), xcde.ini run_speed
+// for players. The party scanner finds the leader's entity when the option is on.
+static float run_scale(void) {
+    static int init;
+    static float env = 1.0f;
+    static bool env_set;
+    if (!init) {
+        init = 1;
+        const char *e = getenv("XCDE_RUN_SCALE");
+        if (e) {
+            char *end = NULL;
+            float x = strtof(e, &end);
+            if (end != e && x > 0.0f) { env = x; env_set = true; }  // (0 / garbage: use the setting)
+        }
+    }
+    return env_set ? env : g_settings.run_speed;
+}
+
+static void run_speed_tick(Cpu *c, uint64_t frame) {
+    float scale = run_scale();
+    static int reported;
+    if (!reported && scale > 1.0f) { reported = 1; LOG("[run] movement x%.2f (setting %.2f)\n", scale, g_settings.run_speed); }
+    if (!(scale > 1.0f)) return;
+    Found f;
+    found_get(&f);
+    if (!player_in_control(found_one(&f, K_PLAYER)) || cutscene_playing(frame)) return;
+    uint64_t fo = found_one(&f, K_FIELD);
+    uint64_t g = fo ? field_group(c, fo + 0x20) : 0;
+    if (!g) return;
+    uint64_t obj = 0;
+    uint64_t ent = slot_entity(c, fo, g, 0, &obj, NULL);
+    if (!ent) return;
+    volatile float *pos = (volatile float *)(uintptr_t)(ent + 0x110);
+    volatile float *mpos = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0x50);
+    static uint64_t last_ent;
+    static float last[3];
+    if (last_ent == ent) {
+        float dx = pos[0] - last[0], dy = pos[1] - last[1], dz = pos[2] - last[2];
+        // (a teleport / load / warp: leave it alone, do not multiply the jump)
+        if (fabsf(dx) < 2.0f && fabsf(dy) < 2.0f && fabsf(dz) < 2.0f) {
+            // Horizontal only: jumping/falling keeps the game's own gravity and landing.
+            pos[0] = last[0] + dx * scale;
+            pos[2] = last[2] + dz * scale;
+            // The movement object owns the position the game moves from next frame; its ground/collision snaps follow.
+            mpos[0] = pos[0], mpos[2] = pos[2];
+            volatile float *low = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0x78);
+            volatile float *high = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0xa0);
+            low[0] = pos[0], low[2] = pos[2], high[0] = pos[0], high[2] = pos[2];
+        }
+    }
+    last_ent = ent;
+    last[0] = pos[0], last[1] = pos[1], last[2] = pos[2];
 }
 
 // [XCDE] Arts hotkeys (keyboard 1-8 / T, runtime/hle/input.c): select a palette slot and use it the way a player does -
@@ -1057,6 +1125,7 @@ void party_game_tick(Cpu *c, uint64_t frame) {
     ent_scan(c, frame);
     debug_fixed(c, frame);
     debug_tour(c, frame);
+    run_speed_tick(c, frame);
     extern bool g_party_switch;
     static uint64_t at[16];
     static int nat = -1;
@@ -1069,14 +1138,14 @@ void party_game_tick(Cpu *c, uint64_t frame) {
     }
 #ifdef _WIN32
     static bool scanner;
-    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used)) {  // (only with the option on: no thread, no scans otherwise)
+    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used || run_scale() > 1.0f)) {  // (only with an option on: no thread, no scans otherwise)
         scanner = true;
         HANDLE t = CreateThread(NULL, 0, party_scanner, NULL, 0, NULL);
         if (t) { SetThreadPriority(t, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(t); }
     }
 #else
     static bool scanner;
-    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used)) {
+    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used || run_scale() > 1.0f)) {
         scanner = true;
         pthread_t t;
         if (!pthread_create(&t, NULL, party_scanner, NULL)) pthread_detach(t);

@@ -156,6 +156,7 @@ struct Cfg {
     int cutscenes = 0;      // T224: 0 at the FPS setting, 1 at 30 (xcde.ini cutscenes = same | 30)
     bool cut_fg = false;    // T224: cutscenes at 30 + frame generation, gameplay without it (xcde.ini cutscenes = 30fg)
     bool party_switch = false;  // party mod: switch the controlled character (F2 / L2 + L1 / R1), runtime/hle/party.c
+    float run_speed = 1.0f;     // GitHub #100: player movement multiplier (1, 1.5, 2), runtime/hle/party.c
     bool show_fps = false;
     int fps = 0;  // index into k_fps_ini
     int volume = 100;
@@ -396,6 +397,14 @@ static const char *const k_en[][2] = {
     {"No se pudo crear el reporte (falta tar.exe de Windows)", "Could not create the report (Windows' tar.exe is missing)"},
     {"No se pudo crear el reporte", "Could not create the report"}, {"Reporte creado: ", "Report created: "},
     {" (adjúntalo al reportar el problema)", " (attach it to the bug report)"},
+    {"Velocidad al correr", "Run speed"}, {"Normal (x1)", "Normal (x1)"}, {"Rápida (x1.5)", "Fast (x1.5)"},
+    {"Muy rápida (x2)", "Very fast (x2)"},
+    {"Multiplica la velocidad del personaje controlado (también en combate). El juego sigue\n"
+     "resolviendo el suelo y las colisiones; las animaciones mantienen su ritmo original.\n"
+     "También se puede cambiar dentro del juego, en el menú, pestaña Trucos.",
+     "Multiplies the controlled character's movement speed (in battle too). The game still\n"
+     "resolves the ground and collisions; animations keep their original timing.\n"
+     "It can also be changed in the game, in the menu's Cheats tab."},
     {"Vibración del mando", "Gamepad vibration"},
     {"Activa el motor del mando cuando el juego manda vibración (por ejemplo en combate).\n"
      "También se puede cambiar dentro del juego, en el menú, pestaña Controles.",
@@ -584,6 +593,7 @@ static void load() {
         else if (!strcmp(k, "vsync")) g.vsync = atoi(v) != 0;
         else if (!strcmp(k, "cutscenes")) { g.cutscenes = !strcmp(v, "30") || !strcmp(v, "30fg") ? 1 : 0; g.cut_fg = !strcmp(v, "30fg"); }
         else if (!strcmp(k, "party_switch")) g.party_switch = atoi(v) != 0;
+        else if (!strcmp(k, "run_speed")) { float x = (float)atof(v); g.run_speed = x < 1.0f ? 1.0f : x > 2.0f ? 2.0f : x; }
         else if (!strcmp(k, "show_fps")) g.show_fps = atoi(v) != 0;
         else if (!strcmp(k, "vulkan_api")) g.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g.fps_overlay = atoi(v) != 0;
@@ -660,6 +670,7 @@ static bool save() {
     fprintf(f, "vsync = %d\n", g.vsync);
     fprintf(f, "cutscenes = %s\n", g.cut_fg ? "30fg" : g.cutscenes ? "30" : "same");
     fprintf(f, "party_switch = %d\n", g.party_switch);
+    fprintf(f, "run_speed = %.2f\n", g.run_speed);
     fprintf(f, "volume = %d\nmovie_audio = %d\nlanguage = %s\nfps = %s\n", g.volume, g.movie_audio, k_lang_ini[g.lang], k_fps_ini[g.fps]);
     for (const Mod &m : g_mods) if (!is_icon_mod(m.name)) fprintf(f, "mod_%s = %d", m.name.c_str(), m.on), fputc(10, f);
     int ic = icons_effective(g.icons);
@@ -2026,6 +2037,21 @@ static void tab_controls() {
     }
 }
 
+// Cheats: options that are not part of the original game (runtime/hle/party.c reads them from xcde.ini at launch).
+static void tab_cheats() {
+    ImGui::TextDisabled(g.ui_lang ? "Options that are not part of the original game. They apply when the game starts."
+                                  : "Opciones que no forman parte del juego original. Se aplican al iniciar el juego.");
+    ImGui::SeparatorText(g.ui_lang ? "Movement" : "Movimiento");
+    static const char *rs_ui[] = {"Normal (x1)", "Rápida (x1.5)", "Muy rápida (x2)"};
+    static const float rs_val[] = {1.0f, 1.5f, 2.0f};
+    int rsi = g.run_speed >= 1.75f ? 2 : g.run_speed >= 1.25f ? 1 : 0;
+    ImGui::SetNextItemWidth(340 * g_scale);
+    if (monado_combo(T("Velocidad al correr"), &rsi, TL(rs_ui, 3).p, 3)) g.run_speed = rs_val[rsi];
+    ImGui::SetItemTooltip(T("Multiplica la velocidad del personaje controlado (también en combate). El juego sigue\n"
+                            "resolviendo el suelo y las colisiones; las animaciones mantienen su ritmo original.\n"
+                            "También se puede cambiar dentro del juego, en el menú, pestaña Trucos."));
+}
+
 // Mods: every folder in mods/ with a romfs/ inside (runtime/services/romfs_virtual.c applies them alphabetically,
 // a later one wins for the same file); xcde.ini mod_<folder> = 0/1, on by default.
 #ifndef _WIN32
@@ -2366,7 +2392,8 @@ int main(int argc, char **argv) {
     bool have_exe = exists(GAME_EXE);
     bool run = true, launched = false;
     Cfg saved_cfg; memcpy(&saved_cfg,&g,sizeof g);
-    int section=shot ? (shot_tab==4 ? 0 : shot_tab==5 ? 5 : shot_tab==0 ? 1 : shot_tab==1 ? 2 : shot_tab==2 ? 3 : 4) : 0;
+    static const int shot_section[] = {1, 2, 4, 5, 0, 6, 3};  // --shot tab: graphics, controls, audio, mods, home, diagnostics, cheats
+    int section=shot ? (shot_tab >= 0 && shot_tab < 7 ? shot_section[shot_tab] : 0) : 0;
     uint64_t last_input=SDL_GetTicks(); bool got_event=false;
     if (shot_pc) pc_start(false);
     while (run) {
@@ -2430,13 +2457,13 @@ int main(int argc, char **argv) {
         ImGui::BeginChild("navigation",ImVec2(224*scale,-bottom),0,ImGuiWindowFlags_AlwaysUseWindowPadding);
         ImGui::TextDisabled("%s", g.ui_lang ? "CONFIGURATION" : "CONFIGURACIÓN");
         ImGui::Spacing();
-        const char *es[]={"Inicio","Gráficos","Controles","Audio e idioma","Mods","Diagnóstico"};
-        const char *en[]={"Home","Graphics","Controls","Audio & language","Mods","Diagnostics"};
+        const char *es[]={"Inicio","Gráficos","Controles","Trucos","Audio e idioma","Mods","Diagnóstico"};
+        const char *en[]={"Home","Graphics","Controls","Cheats","Audio & language","Mods","Diagnostics"};
         static int shown_section = -1;
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(.50f,.13f,.19f,1));  // the selected page: the crimson accent
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(.65f,.18f,.24f,1));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(.75f,.20f,.26f,1));
-        for (int i=0;i<6;i++) if (ImGui::Selectable(g.ui_lang ? en[i] : es[i],section==i,0,ImVec2(0,38*scale))) section=i;
+        for (int i=0;i<7;i++) if (ImGui::Selectable(g.ui_lang ? en[i] : es[i],section==i,0,ImVec2(0,38*scale))) section=i;
         ImGui::PopStyleColor(3);
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         ImGui::TextColored(monado_teal(), "MONADO");
@@ -2447,7 +2474,7 @@ int main(int argc, char **argv) {
         ImGui::PushItemWidth(fminf(340*scale,ImGui::GetContentRegionAvail().x*0.60f));
         switch(section) {
         case 0: tab_home(); break; case 1: tab_graphics(); break; case 2: tab_controls(); break;
-        case 3: tab_audio(); break; case 4: tab_mods(); break; default: tab_diagnostics(); break;
+        case 3: tab_cheats(); break; case 4: tab_audio(); break; case 5: tab_mods(); break; default: tab_diagnostics(); break;
         }
         ImGui::PopItemWidth(); ImGui::EndChild();
         ImGui::Separator();

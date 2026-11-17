@@ -190,7 +190,9 @@ static const char *const k_en[][2] = {
     {"Antialiasing temporal (TAA) del juego (al reiniciar)", "The game's temporal anti-aliasing (TAA) (after a restart)"},
     {"Mostrar FPS en la barra de título", "Show FPS in the title bar"}, {"Velocidad", "Speed"}, {"30 (como en Switch)", "30 (like Switch)"},
     {"Sin límite", "Unlímited"}, {"FPS (al reiniciar)", "FPS (after a restart)"}, {"V-Sync (con 30 / 60 FPS)", "V-Sync (at 30 / 60 FPS)"},
-    {"Volumen", "Volume"}, {"Audio de los vídeos (al reiniciar)", "Video sound (after a restart)"}, {"Controles", "Controls"},
+    {"Volumen", "Volume"}, {"Audio de los vídeos (al reiniciar)", "Video sound (after a restart)"},
+    {"Velocidad al correr", "Run speed"}, {"Normal (x1)", "Normal (x1)"}, {"Rápida (x1.5)", "Fast (x1.5)"},
+    {"Muy rápida (x2)", "Very fast (x2)"}, {"Controles", "Controls"}, {"Trucos", "Cheats"},
     {"La asignación de teclas y botones se cambia en el launcher (Play Monado.bat), pestaña Controles.",
      "Keys and buttons are remapped in the launcher, Controls tab."},
     {"GPU / Vulkan", "GPU / Vulkan"}, {"Adaptador Vulkan activo", "Active Vulkan adapter"},
@@ -452,6 +454,16 @@ static void ui(void) {
         if (ImGui::BeginTabItem(T("Controles"))) {
             ImGui::TextWrapped(T("La asignación de teclas y botones se cambia en el launcher (Play Monado.bat), pestaña Controles."));
             ImGui::Checkbox(g_settings.ui_lang ? "Gamepad vibration" : "Vibración del mando", &g_settings.input_rumble);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(T("Trucos"))) {
+            static const char *rs_ui[] = {"Normal (x1)", "Rápida (x1.5)", "Muy rápida (x2)"};
+            static const float rs_val[] = {1.0f, 1.5f, 2.0f};
+            int rsi = g_settings.run_speed >= 1.75f ? 2 : g_settings.run_speed >= 1.25f ? 1 : 0;
+            if (monado_combo(T("Velocidad al correr"), &rsi, TL(rs_ui, 3).p, 3)) g_settings.run_speed = rs_val[rsi];
+            ImGui::SetItemTooltip("%s", g_settings.ui_lang
+                ? "Multiplies the controlled character's movement speed (in battle too). The game still resolves the ground and collisions."
+                : "Multiplica la velocidad del personaje controlado (también en combate). El juego sigue resolviendo el suelo y las colisiones.");
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
