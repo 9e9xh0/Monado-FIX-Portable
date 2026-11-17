@@ -45,13 +45,21 @@ static inline void monado_effect_controls(Settings *s, bool en) {
     if (!ImGui::CollapsingHeader(en ? "Experimental cosmetic reductions (restart)" : "Recortes decorativos experimentales (reiniciar)")) return;
     ImGui::TextWrapped("%s",en ? "Opt-in until visual tests pass. Checked means disabled. Original files are preserved." :
                        "Opcionales hasta completar pruebas visuales. Marcado significa desactivado. Se conservan los archivos originales.");
-    const char *es[]={"Oclusión ambiental temporal", "Reflejos de pantalla", "Bloom", "Rayos de luz", "Sombras de nubes"};
-    const char *eng[]={"Temporal ambient occlusion", "Screen-space reflections", "Bloom", "Light shafts", "Cloud shadows"};
-    for (unsigned i=0;i<5;i++) {
-        bool off=(s->effects_off&(1u<<i))!=0;
+    // These toggles edit lib_nx keys; gfx_ui_options shows the live per-view options with some of the same labels
+    // (e.g. "Light shafts"). Scope their IDs, or ImGui reports 2 visible items with conflicting ID.
+    ImGui::PushID("effects_off");
+    // Bit 0 (temporal AO) is not here: GFX_AO is the single Ambient occlusion control (Original / Off / On / Classic).
+    const unsigned bits[]={EFFECT_SSR,EFFECT_BLOOM,EFFECT_GODRAY,EFFECT_CLOUD_SHADOW};
+    const char *es[]={"Reflejos de pantalla", "Bloom", "Rayos de luz", "Sombras de nubes"};
+    // Bit 3 writes lib_nx godray=off: "God rays", not the per-view light_shafts option (graphics_options.h GFX_SHAFTS).
+    const char *eng[]={"Screen-space reflections", "Bloom", "God rays", "Cloud shadows"};
+    for (unsigned i=0;i<4;i++) {
+        const unsigned bit=bits[i];
+        bool off=(s->effects_off&bit)!=0;
         if (ImGui::Checkbox(en ? eng[i] : es[i],&off)) {
-            if (off) s->effects_off|=1u<<i; else s->effects_off&=~(1u<<i);
+            if (off) s->effects_off|=bit; else s->effects_off&=~bit;
             s->quality_preset=QUALITY_CUSTOM;
         }
     }
+    ImGui::PopID();
 }

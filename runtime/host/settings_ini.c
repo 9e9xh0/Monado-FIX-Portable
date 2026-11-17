@@ -136,6 +136,7 @@ void settings_load(void) {
     }
     fclose(f);
     xcde_foliage_configure(g_settings.grass_lod);  // [XCDE] the saved grass preset
+    xcde_quality_migrate_ao(&g_settings.graphics, &g_settings.effects_off);  // [XCDE] one AO control (GFX_AO)
     xcde_graphics_publish(&g_settings.graphics);
     if (g_window_w < 320) g_window_w = 320;
     if (g_window_h < 180) g_window_h = 180;

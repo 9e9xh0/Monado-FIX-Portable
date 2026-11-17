@@ -57,3 +57,11 @@ static inline void xcde_quality_apply(Settings *s, int p) {
     s->frame_gen=q.frame_gen; s->effects_off=q.effects;
     if (s->cutscene_mode==2) s->cutscene_mode=1; // restoring any preset also clears cutscene-only generation
 }
+// [XCDE] The old "Temporal ambient occlusion" checkbox (effects_off bit 0) duplicated the Ambient occlusion combo
+// (graphics.value[GFX_AO]) in the launcher and F1 menu. Move an existing choice to the combo and retire the bit so the
+// live flags have one owner; Original stays Original.
+static inline void xcde_quality_migrate_ao(GraphicsOptions *graphics, unsigned *effects_off) {
+    if (!(*effects_off & EFFECT_TSSAO)) return;
+    if (gfx_normalize(GFX_AO, graphics->value[GFX_AO]) == 0) graphics->value[GFX_AO] = 1;  // off
+    *effects_off &= ~(unsigned)EFFECT_TSSAO;
+}
