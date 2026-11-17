@@ -196,7 +196,10 @@ static int icons_effective(int sel) {
 }
 static const char *const k_ups_ini[] = {"bilinear", "fsr", "fsr3", "dlss", "fsr4lite"};
 static const char *const k_uq_ini[] = {"native", "quality", "balanced", "performance", "ultra"};
-static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"};
+// [XCDE] Steam Deck: the 16:10 sizes (the Deck's 1280x800 and its 1920x1200 / 2560x1600 external-display peers) after
+// the 16:9 ones, so saved indices stay put; with "Automatic" aspect the game widens its view to fit them.
+static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160", "1280x800", "1920x1200", "2560x1600"};
+static constexpr int k_nwins = (int)(sizeof k_wins / sizeof *k_wins);
 static const char *const k_res_ini[] = {"match", "1", "1.5", "2", "3", "75%", "50%", "dynamic"};
 static const char *const k_res_ui[] = {"Igual que la ventana (recomendado)", "1x - 720p (como Switch)", "1.5x - 1080p",
                                        "2x - 1440p", "3x - 2160p (4K)", "75% de la ventana", "50% de la ventana",
@@ -580,7 +583,7 @@ static void load() {
         if (!strcmp(k, "fullscreen")) g.fullscreen = atoi(v) != 0;
         else if (!strcmp(k, "aspect")) g.aspect = !strcmp(v, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
         else if (!strcmp(k, "ui_scale")) g.ui_scale = ui_scale_percent(atoi(v));
-        else if (!strcmp(k, "window") && (i = find(k_wins, 5, v)) >= 0) g.win = i;
+        else if (!strcmp(k, "window") && (i = find(k_wins, k_nwins, v)) >= 0) g.win = i;
         else if (!strcmp(k, "resolution") && (i = find(k_res_ini, 8, v)) >= 0) g.res = i;
         else if (!strcmp(k, "upscaler")) { g.upscaler_auto = !strcmp(v, "auto"); g.upscaler = !strcmp(v, "fsr") || g.upscaler_auto ? 1 : !strcmp(v, "fsr3") ? 2 : !strcmp(v, "dlss") ? 3 : !strcmp(v, "fsr4lite") ? 4 : 0; }
         else if (!strcmp(k, "upscale_quality") && (i = find(k_uq_ini, 5, v)) >= 0) g.uquality = i;
@@ -1830,7 +1833,7 @@ static void tab_graphics() {
         ? "Shrinks the field and battle HUD towards its corners. Menus keep the game's own size.\nAlso in the game's F1 menu, Graphics tab (applies at once)."
         : "Reduce el HUD de exploración y combate hacia sus esquinas. Los menús mantienen el tamaño del juego.\nTambién en el menú F1 del juego, pestaña Gráficos (se aplica al instante).");
     ImGui::SetNextItemWidth(260 * g_scale);
-    monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, 5);
+    monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, k_nwins);
     ImGui::SeparatorText(T("Resolución y escalado"));
     ImGui::SetNextItemWidth(360 * g_scale);
     monado_combo(T("Resolución interna"), &g.res, TL(k_res_ui, 8).p, 8);
@@ -2384,8 +2387,22 @@ int main(int argc, char **argv) {
     float scale = shot && argc>6 ? (float)atof(argv[6]) : SDL_GetWindowDisplayScale(win) / density;
     if (scale <= 0) scale = 1;
     g_scale = scale;
-    SDL_SetWindowMinimumSize(win,820,620);
-    SDL_SetWindowSize(win, (int)(1100 * scale), (int)(820 * scale));
+    {   // [XCDE] Steam Deck (1280x800): 820 px tall put the bottom row (Play) under the screen edge in Desktop Mode.
+        // Fit the usable area of the window's display (taskbar and title bar left out), never below 640x480.
+        int ww = (int)(1100 * scale), wh = (int)(820 * scale), mw = 820, mh = 620;
+        SDL_Rect ub;
+        if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(win), &ub) && ub.w > 0 && ub.h > 0) {
+            int t = 0, l = 0, b = 0, r = 0;
+            SDL_GetWindowBordersSize(win, &t, &l, &b, &r);  // (0 while hidden on some backends: keep a margin)
+            if (t <= 0) t = 32;
+            int aw = std::max(640, ub.w - l - r), ah = std::max(480, ub.h - t - b);
+            ww = std::min(ww, aw); wh = std::min(wh, ah);
+            mw = std::min(mw, ww); mh = std::min(mh, wh);
+            llog("launcher window %dx%d (usable display area %dx%d)", ww, wh, ub.w, ub.h);
+        }
+        SDL_SetWindowMinimumSize(win, mw, mh);
+        SDL_SetWindowSize(win, ww, wh);
+    }
     if (shot && argc>5) { int h=std::clamp(atoi(argv[5]),540,2160); SDL_SetWindowSize(win,h*16/9,h); }
     SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     if (!shot) SDL_ShowWindow(win);

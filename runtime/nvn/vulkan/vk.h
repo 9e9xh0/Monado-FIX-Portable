@@ -139,6 +139,11 @@ void vk_texture_gone(NvnTexture *t);  // [XCDE] issue #25: drop snapshot caches 
 // [XCDE] issue #7: AMD RDNA 3 only (Navi 31/32/33 + Phoenix1/Phoenix2 iGPUs).
 // Everything else (RDNA 1/2/4, Vega, NVIDIA, Intel) returns false.
 bool vk_amd_rdna3(void);
+// [XCDE] Steam Deck: an AMD integrated GPU on a driver that is not Mesa RADV. The [VEGA-FIX] pipeline workarounds
+// (no pipeline libraries, no whole-pipeline precompile, 2 precompile threads) answer crashes in AMD's own driver
+// compiler (amdvlk64.dll on Windows); RADV (SteamOS, Linux) has its own compiler, fast-linking pipeline libraries, and
+// needs them to avoid shader stutter. GPU-cost workarounds (occlusion counters, heavy volume effects) don't use this.
+bool vk_amd_igpu_vendor_driver(void);
 bool vk_tex_add_storage(NvnTexture *t, VkCommandBuffer cb);  // [XCDE] T192 (textures.c)
 VkFormat vk_format(uint32_t nvn_format);
 bool vk_format_alpha_one(uint32_t nvn_format);

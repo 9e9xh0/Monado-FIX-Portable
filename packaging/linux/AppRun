@@ -60,7 +60,14 @@ data=$(CDPATH= cd -- "$data" && pwd)
 export LARECOMP_DATA_ROOT="$data"
 if [ -n "$root" ]; then
   [ -f "$root/exefs/main" ] && [ -d "$root/romfs" ] || { echo "$root must contain exefs/main and romfs/ (your dump)" >&2; exit 2; }
-  ln -sfn -- "$(CDPATH= cd -- "$root" && pwd)" "$data/targets"
+  # GitHub #86 (Steam Deck): with the AppImage inside the data folder, "targets next to the AppImage" IS
+  # $data/targets, and a logical pwd gave back that link's own path, so it was relinked to itself (a loop: the dump
+  # vanished at the next start, launched from Game Mode). pwd -P resolves the real folder; a link that already
+  # points there is left alone.
+  dump=$(CDPATH= cd -- "$root" && pwd -P)
+  if [ "$(CDPATH= cd -- "$data/targets" 2>/dev/null && pwd -P)" != "$dump" ]; then
+    ln -sfn -- "$dump" "$data/targets"
+  fi
 fi
 ln -sfn -- "$appdir/usr/bin/monado" "$data/build/linux/monado"
 cd -- "$data"

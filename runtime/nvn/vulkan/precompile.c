@@ -620,8 +620,7 @@ int vk_precompile_main(const char *root) {
             nthreads = cap;
         }
     }
-    if (!getenv("XCDE_PRECOMPILE_THREADS") && g_vk.props.vendorID == 0x1002 &&
-        g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && nthreads > 2) {  // [VEGA-FIX]
+    if (!getenv("XCDE_PRECOMPILE_THREADS") && vk_amd_igpu_vendor_driver() && nthreads > 2) {  // [VEGA-FIX] (not RADV)
         printf("[precompile] AMD integrated GPU: 2 threads%c", 10);
         nthreads = 2;
     }
@@ -665,7 +664,8 @@ int vk_precompile_main(const char *root) {
     if (nvar) {  // [XCDE] T240: the whole optimized pipelines (XCDE_PRECOMPILE_PIPELINES=0: pieces only, as before)
         const char *e = getenv("XCDE_PRECOMPILE_PIPELINES");
         // [VEGA-FIX] AMD integrated GPUs: the driver compiles of whole pipelines are what crashed there - off unless =1
-        bool amd_igpu = g_vk.props.vendorID == 0x1002 && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+        // (AMD's driver only: Mesa RADV, the Steam Deck's, builds them - XCDE_PRECOMPILE_PIPELINES=0 still turns it off)
+        bool amd_igpu = vk_amd_igpu_vendor_driver();
         if (amd_igpu && !(e && atoi(e) == 1)) {
             printf("[precompile] AMD integrated GPU: whole-pipeline precompile skipped (XCDE_PRECOMPILE_PIPELINES=1 to force)%c", 10);
             e = "0";
