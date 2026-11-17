@@ -1499,3 +1499,17 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   Pruebas: `test_settings_roundtrip.c` (1.5 de entrada, 2.0 tras guardar/cargar), build Linux completo; el
   mantenedor confirma en juego que el personaje corre rápido con x2. Animaciones a ritmo original (puede haber algo
   de deslizamiento de pies).
+
+## 48:9 (tres monitores) — 2026-11-17 (T271)
+
+- [x] T271 **#26: soporte 48:9 (5760x1080).** El ensanchado de la escena ("Relación de aspecto: Automático") se
+  limitaba a 32:9 (`runtime/nvn/vulkan/device.c`), así que en una ventana de 5760x1080 el juego presentaba su imagen
+  16:9 centrada con barras negras (parecía que volvía a 720p). El límite pasa a 48:9 y vive en
+  `runtime/aspect_policy.h` (`xcde_aspect_widened`, probado en `test_display_options.c`). El launcher y
+  `recomplauncher.json` ofrecen 5760x1080 y 7680x1440 (tres pantallas 16:9 en horizontal); antes el launcher sólo
+  reconocía hasta 3840x2160 y al guardar devolvía `window` al preset de 1280x720.
+  Pruebas: test nativo; ejecución oculta a 5760x1080 y a 1920x360 (mismo 48:9 en un monitor 16:9) con captura
+  `build/window.png`: `[aspect] next scene aspect 5.3333`, la escena ocupa todo el ancho y el HUD sigue en el cuadro
+  16:9 central. Hecho cuando: usuario de triple monitor confirma 5760x1080 en juego (pendiente del reportero).
+  Pendiente conocido con 48:9: artefactos de profundidad de campo (bokeh estirado / bandas laterales) y algunos bugs
+  de HUD; quedan anotados para una tarea aparte.

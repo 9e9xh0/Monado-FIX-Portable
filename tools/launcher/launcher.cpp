@@ -194,7 +194,9 @@ static int icons_effective(int sel) {
 }
 static const char *const k_ups_ini[] = {"bilinear", "fsr", "fsr3", "dlss", "fsr4lite"};
 static const char *const k_uq_ini[] = {"native", "quality", "balanced", "performance", "ultra"};
-static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"};
+// [XCDE] GitHub #26: the last two span three 16:9 monitors side by side (48:9) in Windowed mode.
+static const char *const k_wins[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160", "5760x1080", "7680x1440"};
+enum { NWINS = (int)(sizeof k_wins / sizeof k_wins[0]) };
 static const char *const k_res_ini[] = {"match", "1", "1.5", "2", "3", "75%", "50%", "dynamic"};
 static const char *const k_res_ui[] = {"Igual que la ventana (recomendado)", "1x - 720p (como Switch)", "1.5x - 1080p",
                                        "2x - 1440p", "3x - 2160p (4K)", "75% de la ventana", "50% de la ventana",
@@ -577,7 +579,7 @@ static void load() {
         int i;
         if (!strcmp(k, "fullscreen")) g.fullscreen = atoi(v) != 0;
         else if (!strcmp(k, "aspect")) g.aspect = !strcmp(v, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
-        else if (!strcmp(k, "window") && (i = find(k_wins, 5, v)) >= 0) g.win = i;
+        else if (!strcmp(k, "window") && (i = find(k_wins, NWINS, v)) >= 0) g.win = i;
         else if (!strcmp(k, "resolution") && (i = find(k_res_ini, 8, v)) >= 0) g.res = i;
         else if (!strcmp(k, "upscaler")) { g.upscaler_auto = !strcmp(v, "auto"); g.upscaler = !strcmp(v, "fsr") || g.upscaler_auto ? 1 : !strcmp(v, "fsr3") ? 2 : !strcmp(v, "dlss") ? 3 : !strcmp(v, "fsr4lite") ? 4 : 0; }
         else if (!strcmp(k, "upscale_quality") && (i = find(k_uq_ini, 5, v)) >= 0) g.uquality = i;
@@ -1820,7 +1822,10 @@ static void tab_graphics() {
     const char *aspects[] = {g.ui_lang ? "Automatic" : "Automático", g.ui_lang ? "Original 16:9" : "16:9 original"};
     monado_combo(g.ui_lang ? "Aspect ratio" : "Relación de aspecto", &g.aspect, aspects, 2);
     ImGui::SetNextItemWidth(260 * g_scale);
-    monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, 5);
+    monado_combo(T("Tamaño de la ventana"), &g.win, k_wins, NWINS);
+    ImGui::SetItemTooltip("%s", g.ui_lang
+        ? "5760x1080 / 7680x1440: three 16:9 monitors side by side (48:9). In Fullscreen the desktop resolution is used."
+        : "5760x1080 / 7680x1440: tres monitores 16:9 en horizontal (48:9). En pantalla completa se usa la resolución del escritorio.");
     ImGui::SeparatorText(T("Resolución y escalado"));
     ImGui::SetNextItemWidth(360 * g_scale);
     monado_combo(T("Resolución interna"), &g.res, TL(k_res_ui, 8).p, 8);
