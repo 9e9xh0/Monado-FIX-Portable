@@ -3,6 +3,10 @@
 Accepts a folder holding exefs/ and romfs/ (or --exefs/--romfs separately). Never reads encrypted containers
 (.nsp/.xci/.nca/.nsz/.xcz) and never opens key files (Constitution art. II).
 
+The modules' build-ids are the version gate (FR-003). A romfs from another region has the same build-ids but
+different localized data (bdat/menu), so by default its size and name differences are reported as warnings. Missing
+folders or files are always errors. --strict requires the exact reference dump (FR-004).
+
 Exit codes: 0 ok, 1 usage, 2 container, 3 exefs, 4 version, 5 romfs.
 """
 import argparse
@@ -22,6 +26,7 @@ class Result:
         self.ok = True
         self.code = ERR_OK
         self.messages = []
+        self.warnings = []
 
     def fail(self, code, *msgs):
         self.ok = False
@@ -49,7 +54,40 @@ def _read_build_id(path):
     return head[0x40:0x48].hex()
 
 
-def check_dump(path, profile, exefs=None, romfs=None):
+def _romfs_messages(got, exp, allow_variant):
+    """Errors and warnings for a romfs that does not match the reference manifest.
+
+    The build-id already proved the version. Missing folders and file-count differences are always errors: they mean
+    an incomplete dump. Different sizes or names in the same set of files are how regional dumps differ (localized
+    bdat/menu data), so with allow_variant they are warnings instead of errors.
+    """
+    errors, warnings = [], []
+    for name, (n, b) in exp['dirs'].items():
+        g = got['dirs'].get(name)
+        if g is None:
+            errors.append(f"  folder '{name}' is missing ({n} files)")
+        elif g[0] != n:
+            errors.append(f"  '{name}': {g[0]} files, {n} expected ({n - g[0]} missing)" if g[0] < n
+                          else f"  '{name}': {g[0]} files, {n} expected ({g[0] - n} extra)")
+        elif g[1] != b:
+            text = f"  '{name}': the same number of files but {g[1]} bytes instead of {b}"
+            if allow_variant:
+                warnings.append(text + ' (another region?)')
+            else:
+                errors.append(text + ' (truncated or modified?)')
+    for name in got['dirs']:
+        if name not in exp['dirs']:
+            (warnings if allow_variant else errors).append(f"  unexpected folder '{name}'")
+    if not errors and not warnings:
+        text = '  the same counts and sizes per folder, but different file names'
+        if allow_variant:
+            warnings.append(text + ' (another region or a repacked dump?)')
+        else:
+            errors.append(text + '.')
+    return errors, warnings
+
+
+def check_dump(path, profile, exefs=None, romfs=None, allow_romfs_variant=True):
     r = Result()
     if path is not None:
         low = path.lower()
@@ -99,22 +137,13 @@ def check_dump(path, profile, exefs=None, romfs=None):
     if got['sha256'] == exp['sha256']:
         r.messages.append(f'OK: version {profile["version"]}, {got["files"]} files in romfs.')
         return r
-    msgs = ['The romfs does not match the expected version.']
-    for name, (n, b) in exp['dirs'].items():
-        g = got['dirs'].get(name)
-        if g is None:
-            msgs.append(f"  folder '{name}' is missing ({n} files)")
-        elif g[0] != n:
-            msgs.append(f"  '{name}': {g[0]} files, {n} expected ({n - g[0]} missing)" if g[0] < n
-                        else f"  '{name}': {g[0]} files, {n} expected ({g[0] - n} extra)")
-        elif g[1] != b:
-            msgs.append(f"  '{name}': the same number of files but {g[1]} bytes instead of {b} (truncated or modified?)")
-    for name in got['dirs']:
-        if name not in exp['dirs']:
-            msgs.append(f"  unexpected folder '{name}'")
-    if len(msgs) == 1:
-        msgs.append('  the same counts and sizes per folder, but different file names.')
-    return r.fail(ERR_ROMFS, *msgs)
+    errors, warnings = _romfs_messages(got, exp, allow_romfs_variant)
+    if errors:
+        return r.fail(ERR_ROMFS, 'The romfs does not match the expected version.', *(errors + warnings))
+    r.warnings.extend(warnings)
+    r.messages.append(f'OK: version {profile["version"]}, {got["files"]} files in romfs '
+                      '(differences from the reference dump are listed below).')
+    return r
 
 
 def main(argv=None):
@@ -124,12 +153,17 @@ def main(argv=None):
     ap.add_argument('--romfs')
     ap.add_argument('--profile', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..',
                                                        'games', 'xcde', 'profile.json'))
+    ap.add_argument('--strict', action='store_true',
+                    help='require the exact romfs of the reference dump (default: report other-region differences '
+                         'as warnings)')
     a = ap.parse_args(argv)
     with open(a.profile, encoding='utf-8') as f:
         profile = json.load(f)
-    res = check_dump(a.dump, profile, exefs=a.exefs, romfs=a.romfs)
+    res = check_dump(a.dump, profile, exefs=a.exefs, romfs=a.romfs, allow_romfs_variant=not a.strict)
     for m in res.messages:
         print(m)
+    for m in res.warnings:
+        print('warning:' + m)
     return res.code
 
 

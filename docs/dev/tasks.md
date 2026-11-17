@@ -1472,3 +1472,16 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   del tonemap (las texturas 16x16 de 17101 son LUT 3D), alpha test con hash (rama `fix/foliage-alpha-hash`: alcanza el
   prepass de la hierba, sin efecto visible). Lo que queda es la desoclusión de briznas que se solapan con paralaje
   lateral y el modelo Lite (sin entrada de máscara reactiva en este port).
+
+## Dumps de otras regiones — 2026-11-17 (T269)
+
+- [x] T269 **#132: el builder de v14 rechazaba dumps 2.0.0 de otras regiones por el manifiesto del romfs.** v13 no
+  tenía `tools/gamebuild.py`; v14 lo usa al primer arranque y su `validate()` llama a `check_dump`, que exigía el
+  sha256 exacto de rutas+tamaños del dump de referencia. Los build-ids de los módulos sí coinciden entre regiones y
+  las diferencias son sólo datos localizados (`bdat` y `menu` con el mismo número de archivos y otros bytes). Ahora el
+  build-id sigue siendo la puerta de versión; en el romfs se exigen las carpetas de nivel superior y los recuentos de
+  archivos (un archivo que falta sigue siendo error), y las diferencias de tamaño/nombres se avisan (`another region?`)
+  y el build continúa. `check_dump.py --strict` y `gamebuild --strict-dump` recuperan el rechazo exacto para verificar
+  el dump de referencia. Pruebas: `tests/unit/test_check_dump.py` (variante aceptada con aviso, archivo ausente
+  rechazado, modo estricto rechaza) y `tools/extract/check_dump.py targets` sigue OK con el dump de referencia.
+  Hecho cuando: un dump de otra región con build-ids 2.0.0 compila y arranca (pendiente de confirmación del reportero).
