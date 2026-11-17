@@ -265,6 +265,12 @@ uint64_t renderer_present_count(void);
 static uint8_t tex_scalable(const NvnTexture *t) {
     if (getenv("LARECOMP_NO_SCALE")) return 0;
     if (t->target != 1 || t->samples > 1 || !(t->flags & 8) || t->width < 32 || t->height < 16) return 0;
+    // [XCDE] GitHub #129: the depth-of-field tile buffers (64x36: one texel per 20x20 tile of the 1280x720 frame, see
+    // exec.c T183) are per-tile data, not a picture. Scaled, each texel covered part of a tile with a shifted footprint,
+    // the splat (640x360) and the composite sprites (the game's point-sprite geometry shaders size them from these
+    // texels) no longer agreed on the tile edges, and the composite added the scene onto itself along them: white
+    // staircase lines around characters moving through the focus (jumping) at any internal resolution above 720p.
+    if (t->width == 64 && t->height == 36) return 0;
     float a = (float)t->width / (float)t->height;
     if (a > 1.74f && a < 1.81f) return 1;
     // [XCDE] T182: the menus' character portraits are 3D renders into 192x544 targets (colour, depth, G-buffer; their
