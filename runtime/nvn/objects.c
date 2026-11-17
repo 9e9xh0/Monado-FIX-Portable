@@ -710,8 +710,31 @@ static const uint8_t *code_snapshot(uint64_t code, uint32_t const_offset) {
 
 // [XCDE] T240: the frozen copies BindProgram records (cmdbuf.c), one per distinct set of shaders, kept for the run
 // (draws recorded with one may still be waiting for the render worker; the same shaders set again share it)
-#define FROZEN_TAB (1u << 15)
-static struct { uint64_t h; NvnProgram *p; } frozen_tab[FROZEN_TAB];
+// [XCDE] issue #25: the table grows (it was 32,768 slots, fixed). The key holds guest addresses (code, control) and
+// the game sets shaders again from new addresses all the time after Colony 9's Mechon attack (~400 registrations a
+// second in the tester's log): the table filled, BindProgram recorded the live object, and draws still queued ran
+// with the shaders the game set next - material shaders sampling another material's textures (3D lookups on 2D
+// slots: black objects for a frame), the crashes of #102. Long probe chains near full also ran on the game thread,
+// under snap_lock, for every registration. Kept at most half full; the copies keep their addresses when it grows
+// (command lists recorded once and submitted again still point at them).
+static struct FrozenEnt { uint64_t h; NvnProgram *p; } *frozen_tab;
+static uint32_t frozen_cap, frozen_n;
+static bool frozen_grow(void) {  // (snap_lock held)
+    uint32_t cap = frozen_cap ? frozen_cap * 2 : 1u << 15;
+    struct FrozenEnt *t = calloc(cap, sizeof *t);
+    if (!t) return false;
+    for (uint32_t k = 0; k < frozen_cap; k++) {
+        if (!frozen_tab[k].h) continue;
+        uint32_t i = (uint32_t)frozen_tab[k].h & (cap - 1);
+        while (t[i].h) i = (i + 1) & (cap - 1);
+        t[i] = frozen_tab[k];
+    }
+    free(frozen_tab);
+    frozen_tab = t;
+    frozen_cap = cap;
+    if (cap > (1u << 15)) LOG("[nvn] program freeze table: %u copies, grown to %u slots\n", frozen_n, cap);
+    return true;
+}
 static const NvnProgram *program_freeze(const NvnProgram *p) {
     if (getenv("XCDE_NO_PROGRAM_FREEZE")) return NULL;
     NvnProgram q;
@@ -722,25 +745,28 @@ static const NvnProgram *program_freeze(const NvnProgram *p) {
     uint64_t h = 0xcbf29ce484222325ull;
     const uint8_t *b = (const uint8_t *)&q;
     for (size_t i = 0; i < sizeof q; i++) h = (h ^ b[i]) * 0x100000001b3ull;
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;  // (the low bits pick the slot)
     if (!h) h = 1;
     NvnProgram *r = NULL;
     pthread_mutex_lock(&snap_lock);
-    for (uint32_t i = (uint32_t)h & (FROZEN_TAB - 1), n = 0; n < FROZEN_TAB; i = (i + 1) & (FROZEN_TAB - 1), n++) {
+    if ((frozen_n + 1) * 2 > frozen_cap) frozen_grow();  // (on failure: probe the table as it is)
+    for (uint32_t i = (uint32_t)h & (frozen_cap - 1), n = 0; frozen_cap && n < frozen_cap; i = (i + 1) & (frozen_cap - 1), n++) {
         if (frozen_tab[i].h == h && frozen_tab[i].p->stage_mask == q.stage_mask && !memcmp(frozen_tab[i].p->stages, q.stages, sizeof q.stages)) { r = frozen_tab[i].p; break; }
         if (!frozen_tab[i].h) {
-            if (n > FROZEN_TAB / 2 || !(r = malloc(sizeof q))) { r = NULL; break; }  // (table full: the object as before)
+            if (!(r = malloc(sizeof q))) break;
             memcpy(r, &q, sizeof q);
             r->frozen = r;
             frozen_tab[i].h = h; frozen_tab[i].p = r;
+            frozen_n++;
             break;
         }
     }
     pthread_mutex_unlock(&snap_lock);
     if (!r && (r = malloc(sizeof q))) {
-        // [XCDE] #102: table full - a private copy rather than the object itself. BindProgram recording the live object
-        // let the render worker read it while set_shaders emptied it (both crashes of #102: no vertex code / c1 at 0)
+        // [XCDE] #102: no room (out of memory) - a private copy rather than the object itself. BindProgram recording the
+        // live object let the render worker read it while set_shaders emptied it (both crashes of #102)
         static int warned;
-        if (!warned++) LOG("[nvn] program freeze table full (%u): unshared copies from now on\n", FROZEN_TAB);
+        if (!warned++) LOG("[nvn] program freeze table: no room (%u copies): unshared copies from now on\n", frozen_n);
         memcpy(r, &q, sizeof q);
         r->frozen = r;
     }
