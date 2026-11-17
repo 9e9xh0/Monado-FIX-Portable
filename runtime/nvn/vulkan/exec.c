@@ -5253,10 +5253,27 @@ static uint64_t audit_fs(void);
 // [XCDE] T197: ranges written by storing shaders (the vertex-stage skinning / cloth writers, compute) that draws then
 // read as vertex data get the same mirrors: an in-place read of a GPU-written range is noted, and from the next storing
 // draw / dispatch that binds it on, each such store refreshes the mirror whole after the draw. XCDE_STORE_SHADOW=0: off.
+// [XCDE] issue #25 (diagnostics): mirrors only go away when a newer mirror overlaps them, and at NXSH live mirrors a
+// new writer gets none (its readers fetch over PCIe). The counters below put both in the log - how many were made,
+// retired by an overlap, and refused because the table was full, with the live count - to see whether long sessions
+// reach the limit. (An ageing / eviction pass was tried and churned buffers: stutters on the tester's RTX 4060.)
 typedef struct { uint64_t base, size; VkBuffer buf; VmaAllocation mem; bool sb; } XfbShadow;
 #define NXSH 64
 static XfbShadow xsh[NXSH];
-static int nxsh;
+static int nxsh, nxsh_peak;
+static uint64_t xsh_n_made, xsh_n_retired, xsh_n_refused;  // (the log shows them at powers of two)
+static void xsh_count(uint64_t *c, const char *what) {
+    if (nxsh > nxsh_peak) nxsh_peak = nxsh;
+    if ((++*c & (*c - 1)) == 0)
+        LOG("[vk] mirrors %s: %llu (live %d, peak %d; made %llu, retired %llu, refused %llu)\n", what, (unsigned long long)*c,
+            nxsh, nxsh_peak, (unsigned long long)xsh_n_made, (unsigned long long)xsh_n_retired, (unsigned long long)xsh_n_refused);
+}
+static void xsh_drop(int k) {  // (its buffer freed once the submissions that may read it are done)
+    XfbShadow *o = &xsh[k];
+    if (vc_ndead == VC_DEAD) { vk_wait_seq(vk_pending_seq() - 1); vc_free_dead(false); }
+    if (vc_ndead < VC_DEAD) { vc_dead[vc_ndead].b = o->buf; vc_dead[vc_ndead].m = o->mem; vc_dead[vc_ndead++].seq = vk_pending_seq(); }
+    xsh[k] = xsh[--nxsh];
+}
 static bool xsh_on(void) {
     static int on = -1;
     if (on < 0) {
@@ -5277,27 +5294,39 @@ static void xsh_copy(XfbShadow *s, VkCommandBuffer cb, uint64_t at, uint64_t n) 
     vk_full_barrier(cb);  // (the next readers see it)
 }
 static void xsh_retire_overlaps(uint64_t a, uint64_t sz);
-// after a transform-feedback writer draw (its pass ended): [at, at + n) of the buffer [base, base + size) was written
-static void xsh_written(uint64_t base, uint64_t size, uint64_t at, uint64_t n) {
-    if (!xsh_on() || !gmem_buf || !n || base < HEAP_BASE || base + size > HEAP_BASE + gmem_size) return;
+// after a transform-feedback writer draw (its pass ended): [at, at + n) of the buffer [base, base + size) was written.
+// Returns the mirror when this call made it (NULL: it existed, or none could be made).
+static XfbShadow *xsh_written(uint64_t base, uint64_t size, uint64_t at, uint64_t n) {
+    if (!xsh_on() || !gmem_buf || !n || base < HEAP_BASE || base + size > HEAP_BASE + gmem_size) return NULL;
     XfbShadow *s = NULL;
     for (int i = 0; i < nxsh; i++) if (xsh[i].base == base && xsh[i].size == size) s = &xsh[i];
     VkCommandBuffer cb = vk_cmd();
     if (!s) {
         xsh_retire_overlaps(base, size);  // [XCDE] T205 (redo): a transform-feedback mirror too (see xsh_retire_overlaps)
-        if (nxsh == NXSH) return;
+        if (nxsh == NXSH) {  // [XCDE] issue #25 (diagnostics): this writer gets no mirror - its readers use the heap
+            static int nl;
+            if (nl++ < 20) LOG("[vk] mirror %llx +%llu refused: table full (%d)\n", (unsigned long long)base, (unsigned long long)size, NXSH);
+            xsh_count(&xsh_n_refused, "refused (table full)");
+            return NULL;
+        }
         s = &xsh[nxsh];
+        memset(s, 0, sizeof *s);  // (the slot may hold a dropped mirror's fields: sb)
         VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
                                  .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-        if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &s->buf, &s->mem, NULL) != VK_SUCCESS) return;
+        if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &s->buf, &s->mem, NULL) != VK_SUCCESS) return NULL;
         s->base = base; s->size = size;
         nxsh++;
         xsh_copy(s, cb, base, size);  // (whole: parts not written this frame hold what the heap holds)
         LOG("[vk] transform feedback mirror %llx +%llu in device memory\n", (unsigned long long)base, (unsigned long long)size);
+        xsh_count(&xsh_n_made, "made");
+        if (at + n > base + size) n = base + size - at;
+        xsh_copy(s, cb, at, n);
+        return s;
     }
     if (at + n > base + size) n = base + size - at;
     xsh_copy(s, cb, at, n);
+    return NULL;
 }
 
 static uint64_t xsh_want[32];  // (T197) addresses of in-place vertex reads of GPU-written pages
@@ -5324,9 +5353,8 @@ static void xsh_retire_overlaps(uint64_t a, uint64_t sz) {
         static int nlog;
         if (nlog++ < 40) LOG("[vk] mirror %llx +%llu retired (overlapped by %llx +%llu)\n", (unsigned long long)o->base,
                              (unsigned long long)o->size, (unsigned long long)a, (unsigned long long)sz);
-        if (vc_ndead == VC_DEAD) { vk_wait_seq(vk_pending_seq() - 1); vc_free_dead(false); }
-        if (vc_ndead < VC_DEAD) { vc_dead[vc_ndead].b = o->buf; vc_dead[vc_ndead].m = o->mem; vc_dead[vc_ndead++].seq = vk_pending_seq(); }
-        xsh[k] = xsh[--nxsh];
+        xsh_drop(k);
+        xsh_count(&xsh_n_retired, "retired (overlapped)");
     }
 }
 
@@ -5369,9 +5397,8 @@ static void xsh_stored(int stage) {
             for (int k = 0; k < nwant; k++) want |= xsh_want[k] >= a && xsh_want[k] < a + sz;
             if (!want) continue;
             xsh_retire_overlaps(a, sz);
-            int n0 = nxsh;
-            xsh_written(a, sz, a, sz);
-            if (nxsh > n0) xsh[n0].sb = true;
+            XfbShadow *made = xsh_written(a, sz, a, sz);  // (issue #25: the one it made - not "the slot after n0", which a retire can move)
+            if (made) made->sb = true;
             continue;
         }
         xsh_copy(s, vk_cmd(), a, sz);
@@ -5405,6 +5432,7 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
         bool k = false;
         for (int i = 0; i < nwant; i++) k |= xsh_want[i] == addr;
         if (!k) xsh_want[nwant++] = addr;
+        if (nwant == 32) LOG("[vk] mirrors: in-place read list full (32): later GPU-written ranges get no store mirror\n");  // (issue #25)
     }
     *buf = gmem_buf;
     *off = addr - HEAP_BASE;
