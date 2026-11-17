@@ -187,6 +187,11 @@ static void pick_device(void) {
             g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated" : "discrete");
 }
 
+bool vk_amd_igpu_vendor_driver(void) {
+    return g_vk.props.vendorID == 0x1002 && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU &&
+           g_vk.driver_props.driverID != VK_DRIVER_ID_MESA_RADV;
+}
+
 // [XCDE] issue #7: the glitch is confirmed on RDNA 3 dedicated cards (RX 7800 XT, Navi 32)
 // and on RDNA 3 integrated GPUs (Ryzen 5 8600G, Phoenix1). Device IDs from pci.ids
 // 2026.11.09. Keep this list explicit: Navi 24 (0x743F, RDNA 2) is adjacent to Navi 33.
@@ -309,7 +314,8 @@ static void create_device(void) {
     // [VEGA-FIX] AMD integrated GPUs (Vega 7 / Ryzen 5000 mobile, Vega 8...): the Windows driver's graphics pipeline
     // libraries crashed or failed while precompiling shaders (the launcher retried and then the game closed). Whole
     // pipelines are used there instead (slower first draws, but stable). XCDE_VK_GPL=1 forces the libraries back on.
-    if (gpl && g_vk.props.vendorID == 0x1002 && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+    // Not on Mesa RADV (Steam Deck, Linux): a different compiler, and the libraries are what keeps its shaders smooth.
+    if (gpl && vk_amd_igpu_vendor_driver()) {
         const char *e = getenv("XCDE_VK_GPL");
         if (g_settings.gpu_gpl != GPU_GPL_ON && !(e && atoi(e))) { gpl = false; LOG("[vk] AMD integrated GPU: pipeline libraries off by conservative default\n"); }
     }
@@ -1701,7 +1707,21 @@ void ui_window_init(void) {
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
-    if (g_settings.fullscreen && !getenv("LARECOMP_WINDOW") && !getenv("LARECOMP_HIDDEN")) SDL_SetWindowFullscreen(window, true);
+    // [XCDE] Steam Deck Game Mode (gamescope): a window there is only ever scaled to fit the screen, so the default
+    // 1280x720 one showed as 16:9 with bars on the Deck's 16:10 panel. Under gamescope the game always goes fullscreen
+    // (its output size: 1280x800 on the Deck, which "Automatic" aspect then fills), without changing the saved setting
+    // that Desktop Mode shares. XCDE_GAMESCOPE_FULLSCREEN=0 keeps the window.
+    bool gamescope_fs = false;
+#ifdef __linux__
+    {
+        const char *e = getenv("XCDE_GAMESCOPE_FULLSCREEN");
+        gamescope_fs = getenv("GAMESCOPE_WAYLAND_DISPLAY") && !(e && *e == '0');
+    }
+#endif
+    if ((g_settings.fullscreen || gamescope_fs) && !getenv("LARECOMP_WINDOW") && !getenv("LARECOMP_HIDDEN")) {
+        if (gamescope_fs && !g_settings.fullscreen) LOG("[window] gamescope session: fullscreen\n");
+        SDL_SetWindowFullscreen(window, true);
+    }
     {   // [XCDE] DLSS: Streamline must be loaded before the Vulkan instance (dlss.cpp)
         extern bool dlss_init_early(void);
         dlss_init_early();
