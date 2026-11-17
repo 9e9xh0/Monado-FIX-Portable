@@ -61,7 +61,7 @@ def main(argv=None):
         command += ['--hidden-import', module]
     for package in COLLECT:  # native wheels (capstone, unicorn) load their own libraries
         command += ['--collect-all', package]
-    if os.name == 'nt':  # GitHub #104: the wheel's unicorn.dll can be stopped by Windows at its first mem_map
+    if os.name == 'nt':  # GitHub #104: the wheel's unicorn.dll dies in the CRT's longjmp where CFG is enforced
         probe = subprocess.run([args.python, '-c', 'import importlib.util as u, pathlib as p; '
                                 'print(p.Path(u.find_spec("unicorn").submodule_search_locations[0]) / "lib")'],
                                capture_output=True, text=True)

@@ -3,15 +3,20 @@
 
     python tools/build_unicorn.py [--out build/unicorn] [--install] [--check] [--skip-build]
 
-GitHub #104: unicorn 2.1.4 (the newest release) reserves its 1 GiB code buffer on Windows and commits it on demand
-from a vectored exception handler. On some PCs that first access violation was never resolved and Windows stopped
-monado-gamebuild.exe (0xC0000409) at its first uc_mem_map. The patch commits a 64 MiB buffer up front instead, which
-is what upstream made the default after 2.1.4 (unicorn-engine/unicorn#2364).
+GitHub #104: monado-gamebuild.exe died with 0xC0000409 in VCRUNTIME140.dll at the lifter's first guest fault on a
+PC where Control Flow Guard stayed active for it (despite the cleared CFG flag in its header, see freeze_gamebuild.py).
+unicorn's MSVC build calls the CRT's _setjmp with a zero frame so longjmp does not unwind through generated code; the
+CRT's longjmp fast-fails on such a buffer under CFG. windows-own-longjmp.patch gives unicorn its own setjmp/longjmp
+pair, so CFG no longer matters. windows-commit-upfront.patch commits a 64 MiB code buffer up front instead of
+committing it from a vectored exception handler (what upstream made the default after 2.1.4, unicorn#2364).
 
 Only the AArch64 target is built (all the lifter emulates), which keeps the build to a minute or two. The library
 must match the unicorn Python package (same version): --install replaces the package's own library in place, so
 PyInstaller's --collect-all unicorn picks it up. --check runs a short emulation in a fresh interpreter with
 faulthandler on: with the patch there is no first-touch access violation, so any reported fault fails the check.
+On Windows it also runs cfgcheck.exe, built with /guard:cf so Control Flow Guard is active in it: it makes the guest
+read unmapped memory, which leaves the emulation through longjmp. The stock wheel's library dies there (0xC0000409);
+the build step proves that once, so the check cannot pass by accident.
 
 Windows needs CMake and Visual Studio (the generator the official wheels use; CMake picks the newest); other hosts use Ninja and the
 system compiler (useful only to test this script: their unicorn has no such handler).
@@ -36,6 +41,48 @@ SHA256 = 'ea8863f095a0136388694e5a6063afd9bb7650e30243dd6251af59c5ce5601f4'
 PATCHES = sorted((ROOT / 'tools' / 'unicorn').glob('*.patch'))
 WINDOWS = os.name == 'nt'
 LIBRARY = 'unicorn.dll' if WINDOWS else 'libunicorn.so.2'
+FAST_FAIL = 0xC0000409
+
+# A host with Control Flow Guard (the frozen builder's situation on the #104 PC), hitting unicorn's longjmp.
+CFG_CHECK_C = r'''
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
+#include <windows.h>
+#include <stdio.h>
+#include <unicorn/unicorn.h>
+
+int main(void)
+{
+    PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY cfg = {0};
+    GetProcessMitigationPolicy(GetCurrentProcess(), ProcessControlFlowGuardPolicy, &cfg, sizeof cfg);
+    uc_engine *uc;
+    uc_err err = uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &uc);
+    if (err != UC_ERR_OK) {
+        printf("cfgcheck: uc_open: %s\n", uc_strerror(err));
+        return 2;
+    }
+    const uint64_t base = 0x7000000000ull, x0 = 0x100000;   /* x0: unmapped */
+    const unsigned char code[] = {0x01, 0x00, 0x40, 0xf9};   /* ldr x1, [x0] */
+    uc_mem_map(uc, base, 0x200000, UC_PROT_ALL);
+    uc_mem_write(uc, base, code, sizeof code);
+    uc_reg_write(uc, UC_ARM64_REG_X0, &x0);
+    fflush(stdout);
+    err = uc_emu_start(uc, base, base + sizeof code, 0, 0);  /* the fault leaves through siglongjmp */
+    printf("cfgcheck: Control Flow Guard %s, guest fault -> %s\n", cfg.EnableControlFlowGuard ? "on" : "OFF",
+           uc_strerror(err));
+    uc_close(uc);
+    return cfg.EnableControlFlowGuard && err == UC_ERR_READ_UNMAPPED ? 0 : 1;
+}
+'''
+CFG_CHECK_CMAKE = '''cmake_minimum_required(VERSION 3.16)
+project(cfgcheck C)
+add_executable(cfgcheck cfgcheck.c)
+target_include_directories(cfgcheck PRIVATE "${UC_INCLUDE}")
+target_link_libraries(cfgcheck PRIVATE "${UC_IMPLIB}")
+target_compile_options(cfgcheck PRIVATE /guard:cf)
+target_link_options(cfgcheck PRIVATE /guard:cf)
+'''
 
 CHECK = r'''
 import faulthandler, io, os, sys, tempfile
@@ -109,9 +156,52 @@ def build(out):
             raise SystemExit(f'unicorn: the build produced no {LIBRARY}')
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(found[0], out / LIBRARY)
+        if WINDOWS:
+            build_cfg_check(work, src, build_dir, out)
     (out / 'BUILD.txt').write_text(f'unicorn {VERSION} (aarch64 only) with: '
                                    + ', '.join(p.name for p in PATCHES) + '\n', encoding='utf-8')
     print(f'unicorn {VERSION}: {out / LIBRARY}')
+
+
+def build_cfg_check(work, src, build_dir, out):
+    implib = [p for p in build_dir.rglob('unicorn.lib') if p.is_file()]
+    if not implib:
+        raise SystemExit('unicorn: the build produced no unicorn.lib (import library) for cfgcheck')
+    project = work / 'cfgcheck'
+    project.mkdir()
+    (project / 'cfgcheck.c').write_text(CFG_CHECK_C, encoding='utf-8')
+    (project / 'CMakeLists.txt').write_text(CFG_CHECK_CMAKE, encoding='utf-8')
+    run(['cmake', '-S', project, '-B', project / 'build', '-A', 'x64', f'-DUC_INCLUDE={(src / "include").as_posix()}',
+         f'-DUC_IMPLIB={implib[0].as_posix()}'])
+    run(['cmake', '--build', project / 'build', '--config', 'Release'])
+    exe = [p for p in (project / 'build').rglob('cfgcheck.exe') if p.is_file()]
+    if not exe:
+        raise SystemExit('unicorn: cfgcheck.exe was not built')
+    shutil.copy2(exe[0], out / 'cfgcheck.exe')
+
+
+def run_cfg_check(folder, library):
+    """cfgcheck.exe beside `library` (copied into `folder`); returns its exit code."""
+    if library.resolve() != (folder / LIBRARY).resolve():
+        shutil.copy2(library, folder / LIBRARY)
+    result = subprocess.run([str(folder / 'cfgcheck.exe')], capture_output=True, text=True)
+    print((result.stdout + result.stderr).strip() or '(no output)', f'[exit 0x{result.returncode & 0xFFFFFFFF:08X}]',
+          flush=True)
+    return result.returncode & 0xFFFFFFFF
+
+
+def prove_stock_fails(out):
+    """The stock wheel's library must die in cfgcheck, or cfgcheck does not test what #104 needs."""
+    lib = package_lib_dir()
+    if (lib / 'MONADO_BUILD.txt').is_file():
+        print('+ cfgcheck with the stock library: skipped (the package already has the patched one)', flush=True)
+        return
+    print('+ cfgcheck with the stock wheel library (expected to die with 0xC0000409)', flush=True)
+    with tempfile.TemporaryDirectory(prefix='monado-cfgcheck-') as tmp:
+        shutil.copy2(out / 'cfgcheck.exe', Path(tmp) / 'cfgcheck.exe')
+        code = run_cfg_check(Path(tmp), lib / LIBRARY)
+    if code != FAST_FAIL:
+        raise SystemExit(f'unicorn: the stock library passed cfgcheck (exit 0x{code:08X}): it no longer reproduces #104')
 
 
 def package_lib_dir():
@@ -138,6 +228,8 @@ def main(argv=None):
     out = a.out.resolve()
     if not a.skip_build:
         build(out)
+        if WINDOWS and a.check:
+            prove_stock_fails(out)
     elif not (out / LIBRARY).is_file():
         raise SystemExit(f'unicorn: --skip-build but {out / LIBRARY} is missing')
     if a.install:
@@ -148,6 +240,12 @@ def main(argv=None):
     if a.check:
         print('+ check: one ARM64 instruction with faulthandler on', flush=True)
         subprocess.run([sys.executable, '-c', CHECK], check=True)
+        if WINDOWS:
+            if not (out / 'cfgcheck.exe').is_file():
+                raise SystemExit(f'unicorn: {out / "cfgcheck.exe"} is missing (rebuild without --skip-build)')
+            print('+ cfgcheck: a guest fault in a process with Control Flow Guard', flush=True)
+            if run_cfg_check(out, out / LIBRARY) != 0:
+                raise SystemExit('unicorn: cfgcheck failed: the library does not survive a longjmp under CFG (#104)')
     return 0
 
 

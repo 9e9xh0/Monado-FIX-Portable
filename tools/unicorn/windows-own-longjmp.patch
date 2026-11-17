@@ -1,0 +1,124 @@
+--- a/qemu/include/sysemu/os-win32.h
++++ b/qemu/include/sysemu/os-win32.h
+@@ -39,6 +39,8 @@
+ #if defined(_MSC_VER)   // MSVC
+ // See qemu/include/utils/setjmp-wrapper-win32.asm for details.
+ extern int _setjmp_wrapper(jmp_buf);
++// Monado (GitHub #104): its own longjmp too: the CRT's refuses a zero-frame buffer under Control Flow Guard.
++__declspec(noreturn) extern void _longjmp_wrapper(jmp_buf, int);
+ #undef setjmp
+ #define setjmp(env) _setjmp_wrapper(env)
+ 
+@@ -57,7 +59,11 @@
+  */
+ #define sigjmp_buf jmp_buf
+ #define sigsetjmp(env, savemask) setjmp(env)
++#if defined(_WIN64) && defined(_MSC_VER)
++#define siglongjmp(env, val) _longjmp_wrapper(env, val)
++#else
+ #define siglongjmp(env, val) longjmp(env, val)
++#endif
+ 
+ int getpagesize(void);
+ 
+--- a/qemu/util/setjmp-wrapper-win32.asm
++++ b/qemu/util/setjmp-wrapper-win32.asm
+@@ -1,26 +1,80 @@
+-EXTERN _setjmp: proc
+ PUBLIC _setjmp_wrapper
++PUBLIC _longjmp_wrapper
+ 
+ _TEXT SEGMENT
+ 
+-_setjmp_wrapper PROC
+-
+-; Why do we need this wrapper?
+-; Short answer: Windows default implementation of setjmp/longjmp is incompatible with generated code.
+-; A longer answer: https://blog.lazym.io/2020/09/21/Unicorn-Devblog-setjmp-longjmp-on-Windows/.
+-
+-; From qemu os-win32 comments:
+-; > On w64, setjmp is implemented by _setjmp which needs a second parameter.
+-; > If this parameter is NULL, longjump does no stack unwinding.
+-; > That is what we need for QEMU. Passing the value of register rsp (default)
+-; > lets longjmp try a stack unwinding which will crash with generated code.
+-; It's true indeed, but MSVC doesn't has a setjmp signature which receives two arguements.
+-; Therefore, we add a wrapper to keep the second argument zero.
+-xor rdx, rdx
+-jmp _setjmp
++; Monado (GitHub #104): a complete setjmp/longjmp pair for unicorn's MSVC x64 build, instead of a wrapper around the
++; CRT's _setjmp with a zero frame.
++;
++; QEMU's longjmp must not unwind (generated code has no unwind data), so unicorn used to call the CRT's _setjmp with
++; Frame = 0. VCRUNTIME140's longjmp refuses such a buffer whenever Control Flow Guard is active in the process
++; (__fastfail(FAST_FAIL_INVALID_SET_OF_CONTEXT), exit 0xC0000409), so on a PC where CFG is enforced for the frozen
++; builder every guest fault killed it. These two save and restore the same registers as the CRT (the _JUMP_BUFFER
++; layout: Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12-R15, Rip, MxCsr, FpCsr, Xmm6-Xmm15) and never call into the CRT.
++; Neither needs unwind data: setjmp leaves rsp alone, and longjmp never returns.
+ 
++_setjmp_wrapper PROC
++    mov     qword ptr [rcx], 0              ; Frame: no unwinding
++    mov     [rcx + 08h], rbx
++    lea     rdx, [rsp + 8]                  ; the caller's rsp once this returns
++    mov     [rcx + 10h], rdx
++    mov     [rcx + 18h], rbp
++    mov     [rcx + 20h], rsi
++    mov     [rcx + 28h], rdi
++    mov     [rcx + 30h], r12
++    mov     [rcx + 38h], r13
++    mov     [rcx + 40h], r14
++    mov     [rcx + 48h], r15
++    mov     rdx, [rsp]                      ; return address
++    mov     [rcx + 50h], rdx
++    stmxcsr dword ptr [rcx + 58h]
++    fnstcw  word ptr [rcx + 5Ch]
++    movdqu  xmmword ptr [rcx + 60h], xmm6
++    movdqu  xmmword ptr [rcx + 70h], xmm7
++    movdqu  xmmword ptr [rcx + 80h], xmm8
++    movdqu  xmmword ptr [rcx + 90h], xmm9
++    movdqu  xmmword ptr [rcx + 0A0h], xmm10
++    movdqu  xmmword ptr [rcx + 0B0h], xmm11
++    movdqu  xmmword ptr [rcx + 0C0h], xmm12
++    movdqu  xmmword ptr [rcx + 0D0h], xmm13
++    movdqu  xmmword ptr [rcx + 0E0h], xmm14
++    movdqu  xmmword ptr [rcx + 0F0h], xmm15
++    xor     eax, eax
++    ret
+ _setjmp_wrapper ENDP
+ 
++_longjmp_wrapper PROC
++    mov     eax, edx                        ; setjmp returns val, or 1 for 0
++    test    eax, eax
++    jnz     have_value
++    inc     eax
++have_value:
++    mov     rbx, [rcx + 08h]
++    mov     rbp, [rcx + 18h]
++    mov     rsi, [rcx + 20h]
++    mov     rdi, [rcx + 28h]
++    mov     r12, [rcx + 30h]
++    mov     r13, [rcx + 38h]
++    mov     r14, [rcx + 40h]
++    mov     r15, [rcx + 48h]
++    ldmxcsr dword ptr [rcx + 58h]
++    fnclex
++    fldcw   word ptr [rcx + 5Ch]
++    movdqu  xmm6, xmmword ptr [rcx + 60h]
++    movdqu  xmm7, xmmword ptr [rcx + 70h]
++    movdqu  xmm8, xmmword ptr [rcx + 80h]
++    movdqu  xmm9, xmmword ptr [rcx + 90h]
++    movdqu  xmm10, xmmword ptr [rcx + 0A0h]
++    movdqu  xmm11, xmmword ptr [rcx + 0B0h]
++    movdqu  xmm12, xmmword ptr [rcx + 0C0h]
++    movdqu  xmm13, xmmword ptr [rcx + 0D0h]
++    movdqu  xmm14, xmmword ptr [rcx + 0E0h]
++    movdqu  xmm15, xmmword ptr [rcx + 0F0h]
++    mov     rdx, [rcx + 50h]
++    mov     rsp, [rcx + 10h]
++    jmp     rdx
++_longjmp_wrapper ENDP
++
+ _TEXT ENDS
+ 
+-END
+\ No newline at end of file
++END

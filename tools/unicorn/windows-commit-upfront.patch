@@ -15,8 +15,8 @@
      void* handler = code_gen_buffer_handler;
  
 +    /* Monado (GitHub #104): commit the whole buffer up front instead of reserving it and committing on demand from a
-+       vectored exception handler (registered last in the chain). On some PCs the deliberate first-touch access
-+       violation was never resolved and Windows stopped the process (0xC0000409) at the first uc_mem_map.
++       vectored exception handler (registered last in the chain): no deliberate first-touch access violation, which
++       faulthandler reports as a fatal one and which first looked like the #104 crash (that was the CRT's longjmp).
 +       Upstream made the same change the default after 2.1.4 (unicorn-engine/unicorn#2364, WIN32_ENABLE_VEH off). The
 +       default size is 64 MiB on Windows (DEFAULT_CODE_GEN_BUFFER_SIZE_1), so the commit stays cheap. */
 +    if (size) {
