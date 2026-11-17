@@ -33,6 +33,7 @@ void vk_watch(VkImage dst, const char *site);  // [XCDE] debugging: log writes t
 static VkImage g_watch_img;
 #include "../renderer.h"
 #include "../../settings.h"
+#include "../../ui_scale.h"  // [XCDE] GitHub #121
 #include "../../env_cache.h"  // (last: cached getenv)
 
 static void fb_stats_flush(void);  // (T161, below)
@@ -6314,6 +6315,83 @@ static void draw(CmdRec *r, bool indexed) {
 }
 static uint64_t prof_tp_;
 static VkCliffBatch cliff_batch_try(CmdRec *r, Prog *pr);
+// [XCDE] GitHub #121: HUD scale (runtime/ui_scale.h). XCDE_UI_SCALE=<0.5..1> overrides the setting.
+static uint64_t ui_scale_menu_frame = ~0ull;  // (the last frame a menu's blurred backdrop was drawn)
+static float ui_scale_factor(void) {
+    static float env = -2;
+    if (env == -2) { const char *e = getenv("XCDE_UI_SCALE"); env = e && *e ? (float)atof(e) : -1; }
+    if (env > 0) return env < UI_SCALE_MIN / 100.0f ? UI_SCALE_MIN / 100.0f : env > 1.0f ? 1.0f : env;
+    return ui_scale_percent(g_settings.ui_scale) / 100.0f;
+}
+// The current UI draw's anchor (guest pixels) from its element box: the clip-space transform at the start of vertex
+// cbuf 3 applied to the vertex positions (attribute 0, two floats) of a small single-instance draw, or to its
+// origin alone (instanced text: the string's start). false: not a 2D UI element, or it covers the frame.
+static bool ui_scale_element(CmdRec *r, bool indexed, float *ax, float *ay) {
+    if (!st.ubuf[0][0].addr || st.ubuf[0][0].size < 32 || !st.rt.color[0]) return false;
+    const float *m = (const float *)(uintptr_t)st.ubuf[0][0].addr;
+    float lx0 = 0, ly0 = 0, lx1 = 0, ly1 = 0;
+    uint32_t count = (uint32_t)r->x[2], inst = (uint32_t)(indexed ? r->x[6] : r->x[4]);
+    if (inst <= 1 && count && count <= 64 && st.nattrib > 0 && (st.attrib[0] & 0xFF) == 0x16) {
+        uint32_t a = st.attrib[0], stream = (a >> 8) & 0x1F, off = a >> 13;
+        uint32_t stride = stream < (uint32_t)st.nstream ? st.stream[stream][0] : 0;
+        uint64_t vb = stream < 16 ? st.vbuf[stream].addr : 0, vsz = stream < 16 ? st.vbuf[stream].size : 0;
+        bool any = false;
+        for (uint32_t i = 0; vb && stride && i < count; i++) {
+            int64_t v;
+            if (indexed) {
+                uint32_t it = (uint32_t)r->x[1];
+                const void *ip = (const void *)(uintptr_t)r->x[3];
+                if (!ip) break;
+                v = it == 1 ? ((const uint16_t *)ip)[i] : it == 2 ? ((const uint32_t *)ip)[i] : ((const uint8_t *)ip)[i];
+                v += (int32_t)r->x[4];
+            } else v = (int64_t)r->x[1] + i;
+            if (v < 0 || (uint64_t)v * stride + off + 8 > vsz) continue;
+            const float *p = (const float *)(uintptr_t)(vb + (uint64_t)v * stride + off);
+            if (!isfinite(p[0]) || !isfinite(p[1])) continue;
+            if (!any) { lx0 = lx1 = p[0]; ly0 = ly1 = p[1]; any = true; }
+            else { lx0 = fminf(lx0, p[0]); lx1 = fmaxf(lx1, p[0]); ly0 = fminf(ly0, p[1]); ly1 = fmaxf(ly1, p[1]); }
+        }
+    } else if (inst > 1 && inst <= 4096 && st.nattrib > 2 && (st.attrib[2] & 0xFF) == 0x2e) {
+        // a text string: one instance per glyph, attribute 2 = its rectangle (width, height, x, y) in the string's
+        // space (the glyph quad is x + a0.x * width, y + a0.y * height)
+        uint32_t a = st.attrib[2], stream = (a >> 8) & 0x1F, off = a >> 13;
+        uint32_t stride = stream < (uint32_t)st.nstream ? st.stream[stream][0] : 0;
+        uint64_t vb = stream < 16 ? st.vbuf[stream].addr : 0, vsz = stream < 16 ? st.vbuf[stream].size : 0;
+        uint64_t base = (uint64_t)(indexed ? r->x[5] : r->x[3]);
+        bool any = false;
+        for (uint32_t i = 0; vb && stride && i < inst; i++) {
+            uint64_t at = (base + i) * stride + off;
+            if (at + 16 > vsz) break;
+            const float *p = (const float *)(uintptr_t)(vb + at);
+            bool sane = true;
+            for (int k = 0; k < 4; k++) sane &= isfinite(p[k]) && fabsf(p[k]) < 1e4f;
+            if (!sane) continue;
+            float x0 = fminf(p[2], p[2] + p[0]), x1 = fmaxf(p[2], p[2] + p[0]);
+            float y0 = fminf(p[3], p[3] + p[1]), y1 = fmaxf(p[3], p[3] + p[1]);
+            if (!any) { lx0 = x0; lx1 = x1; ly0 = y0; ly1 = y1; any = true; }
+            else { lx0 = fminf(lx0, x0); lx1 = fmaxf(lx1, x1); ly0 = fminf(ly0, y0); ly1 = fmaxf(ly1, y1); }
+        }
+    }
+    float box[4];
+    if (!ui_scale_box(m, lx0, ly0, lx1, ly1, st.viewport[0], box)) {
+        if (getenv("XCDE_UI_SCALE_LOG") && g_debug_frame)
+            LOG("[ui-scale] vs %llx inst %u count %u: no 2D transform (cb3 %g %g %g %g %g %g %g %g, size %u)\n",
+                (unsigned long long)st.program->stages[0].code_addr, inst, count, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+                (unsigned)st.ubuf[0][0].size);
+        return false;
+    }
+    static UiScaleFrame uf;  // (~20 KB)
+    static uint64_t uf_frame = ~0ull;
+    float fw = (float)st.rt.color[0]->width, fh = (float)st.rt.color[0]->height;
+    if (uf_frame != renderer_present_count()) { uf_frame = renderer_present_count(); ui_scale_frame_begin(&uf, fw, fh); }
+    bool ok = ui_scale_frame_anchor(&uf, box, fw, fh, ax, ay);
+    if (getenv("XCDE_UI_SCALE_LOG") && g_debug_frame)
+        LOG("[ui-scale] vs %llx inst %u count %u box %.0f %.0f %.0f %.0f -> %s %.0f %.0f\n",
+            (unsigned long long)st.program->stages[0].code_addr, inst, count, box[0], box[1], box[2], box[3],
+            ok ? "anchor" : "full", ok ? *ax : 0, ok ? *ay : 0);
+    return ok;
+}
+
 static void draw_(CmdRec *r, bool indexed) {
     cliff_batch_pending.draws = 1;  // [XCDE] T-CLIFF-BATCH
     if (prof) prof_tp_ = SDL_GetTicksNS();
@@ -6561,10 +6639,14 @@ static void draw_(CmdRec *r, bool indexed) {
         tex_presented[1][i] = ti_presented; tex_alloc[1][i][0] = ti_alloc[0]; tex_alloc[1][i][1] = ti_alloc[1];
     }
     if (prof) prof_tex += SDL_GetTicksNS() - prof_tx_;
+    float ui_s = ui_scale_factor();  // [XCDE] GitHub #121: HUD scale (1 = the game's own size)
+    bool ui_s_draw = false;
+    float ui_s_ax = 0, ui_s_ay = 0;  // (this draw's anchor, guest pixels)
     {   // static: [XCDE] test toggle - the old behaviour with XCDE_UI_STRETCH=1 (every draw fills the window, UI stretches)
         static int ui_stretch = -1;
         if (ui_stretch < 0) ui_stretch = getenv("XCDE_UI_STRETCH") != NULL;
-        if (!ui_stretch && fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor &&
+        // ([XCDE] #121: the classification also runs at 16:9 when the HUD is scaled; there the box is the whole window)
+        if (!ui_stretch && (fabsf(pass_sx - pass_sy) > 0.01f * pass_sy || ui_s != 1.0f) && st.rt.ncolor &&
             renderer_texture_presented(st.rt.color[0])) {
         // Draws into the swapchain image (see renderer.m): composites fill the window, UI goes in a centred 16:9 box.
         // [XCDE] GitHub #24/#22 feedback: the mapping must not vary per element - every non-fullscreen draw is a UI
@@ -6610,8 +6692,12 @@ static void draw_(CmdRec *r, bool indexed) {
             uint64_t h = st.program->stages[1].code_hash;
             if ((composite && h == 0xb46dac89bce794eaull) || (!composite && h == 0xccc3653e158b51c9ull))
                 menu_frame = renderer_present_count();
+            // [XCDE] GitHub #121: the HUD scale keys on the blurred backdrop alone - the "frame" shader is a styled-text
+            // shader the battle HUD draws too (arts names, the enemy bar): with it the battle HUD counted as a menu
+            if (composite && h == 0xb46dac89bce794eaull) ui_scale_menu_frame = renderer_present_count();
         }
         bool menu_open = menu_frame != ~0ull && renderer_present_count() - menu_frame <= 4;
+        bool ui_menu = ui_scale_menu_frame != ~0ull && renderer_present_count() - ui_scale_menu_frame <= 4;
         {   // [XCDE] #97 diagnostic (XCDE_WIDE_FS_TRACE=1): per frame, the window draws' fragment shaders (C composite,
             // U UI), logged when the frame's set changes - which draws exist only while a menu is open
             static int tr = -1;
@@ -6680,6 +6766,10 @@ static void draw_(CmdRec *r, bool indexed) {
                 if (n < 1) n = 1;
                 if (n <= 127) wide_ui = (uint8_t)(n | (along_y ? 0x80 : 0));
             }
+            // [XCDE] #121: the HUD only - menus are whole-screen layouts and stay as the game draws them
+            if (ui_s != 1.0f && !ui_menu) ui_s_draw = ui_scale_element(r, indexed, &ui_s_ax, &ui_s_ay);
+            else if (ui_s != 1.0f && g_debug_frame && getenv("XCDE_UI_SCALE_LOG"))
+                LOG("[ui-scale] vs %llx: menu open (not scaled)\n", (unsigned long long)st.program->stages[0].code_addr);
         }
         }  // (if !ui_stretch ...)
     }
@@ -6900,6 +6990,8 @@ static void draw_(CmdRec *r, bool indexed) {
         vp_ox = box_ox; vp_oy = box_oy;
         vp_wide = wide_ui;
     }
+    if (ui_s_draw)  // [XCDE] GitHub #121: the element shrunk around its anchor (window pixels; scissor follows)
+        ui_scale_fold(ui_s, ui_s_ax * vp_sx + vp_ox, ui_s_ay * vp_sy + vp_oy, &vp_sx, &vp_sy, &vp_ox, &vp_oy);
     float jx = 0, jy = 0;
     if (tmp_enabled()) tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
     if (tmp_enabled()) {  // [XCDE] T215: the game's velocity buffer (gTVelocity of its temporal AA / AO / shadow passes)

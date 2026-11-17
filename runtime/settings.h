@@ -62,6 +62,7 @@ typedef struct {
     float run_speed;     // [XCDE] GitHub #100: player movement multiplier (1.0 original, 1.5, 2.0): runtime/hle/party.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
+    int ui_scale;        // [XCDE] GitHub #121: HUD size in % of the game's (50..100; xcde.ini ui_scale): runtime/ui_scale.h
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
