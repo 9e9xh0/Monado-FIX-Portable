@@ -22,16 +22,19 @@ SOURCES = (
     'runtime/cpu.h',
     'runtime/simd.h',
     'runtime/simd_fp.h',
+    # the profile the player's build compiles with (docs/PGO.md): a new one rebuilds the library
+    'data/pgo/monado.proftext.gz',
 )
 
 # Guest translation units are plain C. They are compiled to PIC objects and linked
 # into a shared library that the runtime loads; no C++ or host headers are involved.
-# The same flags as the source builds' game code (scripts/build_boot.sh, build_linux.sh): -O1 matters, the guest
-# memory helpers in runtime/cpu.h rely on it. zig spells the CPU level x86_64_v2.
+# -O2: the level the profile-guided build works at (docs/PGO.md; with the profile, 6% less CPU time per frame than
+# -O2 alone, which is itself 1% ahead of -O1). zig spells the CPU level x86_64_v2. The profile's own flags are added by
+# tools/gamebuild.py when the package stages one (link.json "pgo").
 GUEST_FLAGS = (
     # -g0: zig emits debug info by default; the player does not need it and it
     # multiplies the object files (3.7 MB instead of 0.6 MB per chunk).
-    '-g0', '-O1', '-march=x86_64_v2', '-ffp-contract=off', '-fno-strict-aliasing',
+    '-g0', '-O2', '-march=x86_64_v2', '-ffp-contract=off', '-fno-strict-aliasing',
     '-fvisibility=hidden', '-D_GNU_SOURCE', '-w',
 )
 

@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "../platform.h"
+#include "../pgo.h"
 #include "../rt.h"  // [XCDE] T-LINUX: guest bounds for memory accounting.
 #include "linux_gpu.h"  // [XCDE] T-LINUX-GTT
 
@@ -158,6 +159,7 @@ static void require_cpu(void) {}
 
 void plat_init(void) {
     log_to_file_without_terminal();
+    pgo_start();  // (MONADO_PGO=gen builds only)
     require_cpu();
     // [XCDE] T-LINUX-GTT: before any guest code runs or writes the heap (XCDE_GPU_BO=0: off)
     if (guest_heap_reserved && gpu_heap_fd < 0) linux_gpu_heap_map((void *)(uintptr_t)HEAP_BASE, HEAP_MAX);
@@ -315,7 +317,10 @@ bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPT
 // [XCDE] T-LINUX-THREE: diagnostics exit with _exit, bypassing LLVM's atexit writer.
 extern int __llvm_profile_write_file(void) __attribute__((weak));
 void plat_terminate(void) {
+#ifndef MONADO_PGO_GEN
     if (__llvm_profile_write_file) __llvm_profile_write_file();
+#endif
+    pgo_flush();
     _exit(0);
 }
 

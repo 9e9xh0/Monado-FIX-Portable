@@ -235,6 +235,26 @@ def compiler_env(resources, out, link):
     return env
 
 
+_PGO_FLAGS = {}
+
+
+def pgo_flags(resources, link):
+    """The staged profile (docs/PGO.md): unprofiled / changed functions compile without one, so no warnings.
+    MONADO_PGO_ID puts the profile's digest on the command line: zig's cache (zig-cache in the output folder, kept
+    between builds) keys on the arguments and included files, not on the profile, and would hand back objects built
+    with the previous release's profile."""
+    if not link.get('pgo'):
+        return []
+    path = resources / link['pgo']
+    if path not in _PGO_FLAGS:
+        import hashlib
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+        _PGO_FLAGS[path] = [f'-fprofile-use={path}', '-Wno-profile-instr-unprofiled', '-Wno-profile-instr-out-of-date',
+                            '-Wno-backend-plugin', '-mllvm', '-static-func-full-module-prefix=false',
+                            f'-DMONADO_PGO_ID={digest}']
+    return _PGO_FLAGS[path]
+
+
 def compile_units(resources, out, link, jobs, log):
     """Compile every generated chunk with the bundled compiler, in parallel."""
     compiler = resources / link['compiler']
@@ -264,7 +284,7 @@ def compile_units(resources, out, link, jobs, log):
             done[0] += 1
             return key, signature, target
         command = ([str(compiler)] + list(link.get('compile', ['cc'])) + list(link.get('guest_flags', [])) +
-                   [f'-I{item}' for item in include] + ['-c', str(source), '-o', str(target)])
+                   pgo_flags(resources, link) + [f'-I{item}' for item in include] + ['-c', str(source), '-o', str(target)])
         result = run_tool(command, compiler_env(resources, out, link), log, f'compile {key}', COMPILE_TIMEOUT)
         if result.returncode != 0:
             failures.append(f'{key}:\n{result.stdout}{result.stderr}')

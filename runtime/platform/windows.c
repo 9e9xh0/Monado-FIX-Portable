@@ -12,6 +12,7 @@
 #include <signal.h>
 
 #include "../platform.h"
+#include "../pgo.h"
 
 // ---- guest address space
 // The window is reserved up front and committed per region (plat_commit from the loader / kernel). Anything
@@ -353,6 +354,7 @@ static void pcores_init(void) {
 
 void plat_init(void) {
     log_to_file_without_console();
+    pgo_start();  // (MONADO_PGO=gen builds only)
     require_cpu();
     _fmode = _O_BINARY;  // fopen/open default to binary (the runtime's "r"/"w" files are binary or LF text)
     _setmode(_fileno(stdout), _O_BINARY);
@@ -691,7 +693,7 @@ bool plat_remove_tree(const char *dir) {
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
-void plat_terminate(void) { TerminateProcess(GetCurrentProcess(), 0); }
+void plat_terminate(void) { pgo_flush(); TerminateProcess(GetCurrentProcess(), 0); }
 
 // [XCDE] T122: sampled instruction pointer of a host thread (watchdog: what a thread that makes no SVCs is running)
 #include <pthread.h>
