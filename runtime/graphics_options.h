@@ -14,7 +14,10 @@ static const char *const gfx_labels[GFX_COUNT] = {"Shadows", "Shadow mask (resta
 // Retired effects-resolution Full (2026-11-12): it set TransReduction=off, which the game never shipped. The
 // occlusion boxes then test a full-size depth whose only content is a 640x360 quarter: field objects popped in and
 // out on camera pans (prologue). Only Original remains; the slot stays so indices and live packing are unchanged.
-static inline int gfx_count(int i) { return i==GFX_EFFECTS_RES ? 1 : i==GFX_PROP_LOD ? 4 : i==GFX_FILTERING ? 5 : i==GFX_SHADOWS || i==GFX_SHADOW_MASK || i==GFX_SHADOW_MAPS ? 2 : 3; }
+// [XCDE] #125: ambient occlusion has a 4th choice, Classic: the game's per-frame SSAO instead of its temporal one (TSSAO
+// keeps the darkening of thin things - ropes, railings - in its history: a faint second rope trails them while moving).
+enum { GFX_AO_CLASSIC = 3 };
+static inline int gfx_count(int i) { return i==GFX_EFFECTS_RES ? 1 : i==GFX_PROP_LOD || i==GFX_AO ? 4 : i==GFX_FILTERING ? 5 : i==GFX_SHADOWS || i==GFX_SHADOW_MASK || i==GFX_SHADOW_MAPS ? 2 : 3; }
 // Retired 4096 choice (index 2) exceeded the native render-pool layout.
 // Normalize persisted/in-memory legacy choices to the supported 2048 mode.
 static inline int gfx_normalize(int i,int v) {
@@ -26,6 +29,7 @@ static inline const char *gfx_choice(int i,int v) {
     v=gfx_normalize(i,v);
     if(i==GFX_SHADOW_MAPS) { static const char *const x[]={"original","2048"};return x[v]; }
     if(i==GFX_PROP_LOD) { static const char *const x[]={"original","low","high","ultra"};return x[v]; }
+    if(i==GFX_AO) { static const char *const x[]={"original","off","on","classic"};return x[v]; }
     return i==GFX_FILTERING ? af[v] : i==GFX_SHADOW_MASK || i==GFX_EFFECTS_RES ? full[v] : tri[v];
 }
 static inline const char *gfx_display(int i,int v) {
@@ -33,6 +37,7 @@ static inline const char *gfx_display(int i,int v) {
     v=gfx_normalize(i,v);
     if(i==GFX_SHADOW_MAPS) { static const char *const x[]={"Original (1024 px)","High (2048 px)"};return x[v]; }
     if(i==GFX_PROP_LOD) { static const char *const x[]={"Original (1x)","Low (0.5x)","High (1.5x)","Ultra (2x)"};return x[v]; }
+    if(i==GFX_AO) { static const char *const x[]={"Original","Off","On","Classic, no trails (restart)"};return x[v]; }
     return i==GFX_FILTERING ? af[v] : i==GFX_SHADOW_MASK || i==GFX_EFFECTS_RES ? full[v] : tri[v];
 }
 static inline int gfx_load_key(GraphicsOptions *o,const char *key,const char *value) {
@@ -68,6 +73,7 @@ static inline void gfx_overlay(uint8_t *p,uint64_t b) {
         int v=gfx_value(b,i); if(v==1 || v==2)p[offsets[i]]=(uint8_t)(v==2);
     }
     if(gfx_value(b,GFX_AO)==1)p[0x19c]=0; // disable classic AO as well, preserving it for Original.
+    if(gfx_value(b,GFX_AO)==GFX_AO_CLASSIC) { p[0x17c]=0; p[0x19c]=1; } // #125 (also lib_nx at boot: romfs_virtual.c)
     if(gfx_value(b,GFX_SHADOWS)==1) {
         const float zero=0;
         const unsigned f[]={0x368,0x47c,0x2b0,0x2b4};
@@ -101,10 +107,11 @@ static inline const char *gfx_display_lang(int i, int v, int en) {
     v = gfx_normalize(i, v);
     if (i == GFX_SHADOW_MAPS) { static const char *const x[] = {"Original (1024 px)", "Alta (2048 px)"}; return x[v]; }
     if (i == GFX_PROP_LOD) { static const char *const x[] = {"Original (1x)", "Bajo (0,5x)", "Alto (1,5x)", "Ultra (2x)"}; return x[v]; }
+    if (i == GFX_AO) { static const char *const x[] = {"Original", "Desactivado", "Activado", "Clásica, sin estelas (al reiniciar)"}; return x[v]; }
     if (i == GFX_FILTERING) return gfx_display(i, v);
     return i == GFX_SHADOW_MASK || i == GFX_EFFECTS_RES ? full[v] : tri[v];
 }
 // The options this adds next to the game effects the launcher already toggles (SSAO, SSR, bloom, god rays, cloud
 // shadows: quality_policy.h effects_off), in display order. The others stay available as xcde.ini keys.
-static const int gfx_ui_options[] = {GFX_SHADOWS, GFX_SHADOW_MAPS, GFX_SHADOW_MASK, GFX_PROP_LOD, GFX_FILTERING,
+static const int gfx_ui_options[] = {GFX_SHADOWS, GFX_SHADOW_MAPS, GFX_SHADOW_MASK, GFX_AO, GFX_PROP_LOD, GFX_FILTERING,
                                      GFX_SHAFTS, GFX_MOTION_BLUR, GFX_FUR_BLUR};

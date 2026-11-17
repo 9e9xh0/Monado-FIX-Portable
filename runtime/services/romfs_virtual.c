@@ -120,6 +120,9 @@ static void maybe_edit(File *f) {
     if (g_settings.graphics.value[GFX_SHADOW_MASK] == 1) {  // [XCDE] full-resolution shadow mask (restart)
         if (*edits) strcat(edits, ","); strcat(edits, "shadowHalf=off");
     }
+    // [XCDE] #125: ambient occlusion Classic = the game's per-frame SSAO, not the temporal one (restart: the game sets
+    // its AO passes up from lib_nx.ini at boot; graphics_options.h gfx_overlay keeps the live flags in step)
+    if (g_settings.graphics.value[GFX_AO] == GFX_AO_CLASSIC) { if (*edits) strcat(edits, ","); strcat(edits, "tssao=off,ssao=on"); }
     // [XCDE] xcde.ini taa = 0 (or the revived jitter): the game's temporal AA off; its other AA and motion blur as above
     {
         extern bool tmp_jitter_active(void);
