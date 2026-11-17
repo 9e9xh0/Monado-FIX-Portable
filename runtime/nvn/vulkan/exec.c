@@ -5495,7 +5495,28 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
     if (addr + size > HEAP_BASE + gmem_size && kernel_heap_size() != gmem_tried) { gmem_tried = kernel_heap_size(); gmem_info(); }
     if (!gmem_buf || addr + size > HEAP_BASE + gmem_size) return false;
     g_direct_limit = ~0ull;
-    if (nxsh) { XfbShadow *s = xsh_find(addr, size); if (s) { *buf = s->buf; *off = addr - s->base; g_direct_limit = s->base + s->size - addr; return true; } }  // (T175)
+    if (nxsh) {  // (T175)
+        XfbShadow *s = xsh_find(addr, size);
+        // [XCDE] issues #106 / #35 (Shulk's face stretched for a few seconds in cutscenes): a store mirror is the
+        // range one skinning writer bound. The game's scratch for skinned meshes moves every few frames; when the
+        // next character's mesh starts inside an older, shorter mirror and continues past its end (its tail written
+        // by another store that doesn't overlap the mirror), the binding was clamped to the mirror's end and the tail
+        // vertices / indices read 0 - collapsed to the model's origin. Such a read now goes to the heap (always
+        // current). Transform-feedback mirrors keep the clamp: their streams are bound with the buffer's whole size.
+        // XCDE_MIRROR_SHORT=0: as before.
+        static int short_on = -1;
+        if (short_on < 0) short_on = !(getenv("XCDE_MIRROR_SHORT") && atoi(getenv("XCDE_MIRROR_SHORT")) == 0);
+        if (s && s->sb && short_on && size != ~0ull && addr + size > s->base + s->size) {
+            static uint64_t n_short;
+            n_short++;
+            if ((n_short & (n_short - 1)) == 0)
+                LOG("[vk] mirror %llx +%llu shorter than a read %llx +%llu: read from the heap (%llu so far)\n",
+                    (unsigned long long)s->base, (unsigned long long)s->size, (unsigned long long)addr,
+                    (unsigned long long)size, (unsigned long long)n_short);
+            s = NULL;
+        }
+        if (s) { *buf = s->buf; *off = addr - s->base; g_direct_limit = s->base + s->size - addr; return true; }
+    }
     if (vcache_lookup(addr, size, buf, off)) return true;
     if (pt_state == 1 && nwant < 32 && vc_page_gpu[(addr - HEAP_BASE) / VC_PAGE] && xsh_store_on()) {  // (T197)
         bool k = false;
