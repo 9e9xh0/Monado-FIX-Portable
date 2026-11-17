@@ -15,7 +15,7 @@ Ejecutar `Play Monado.bat`. En **Inicio**, elegir por separado calidad y objetiv
 
 Los rangos conservan el aspecto y no superan la salida. La resolución de menús/HUD del propio juego también puede perder nitidez. Cambiar los FPS, el desenfoque del juego o la política de recursos requiere reiniciar para aplicar el perfil completo. Cambiar calidad no cambia los FPS solicitados, GPU, volumen, controles ni guardados.
 
-Los interruptores de oclusión temporal, reflejos, bloom, rayos y sombras de nubes son **experimentales y opcionales**. Permanecen sin aplicar en los perfiles hasta completar su aceptación visual. Se editan en memoria las claves ya existentes de `lib_nx.ini`; los mods se leen primero y `XCDE_LIBNX` mantiene su prioridad como override explícito. No se añaden nuevos shaders a la lista de omisiones.
+Oclusión ambiental, reflejos, bloom, rayos de luz y sombras de nubes son opciones Original / Desactivado / Activado del launcher y de F1 (`runtime/graphics_options.h`), aplicadas en vivo sobre la copia por vista de la configuración de render (sin editar `lib_nx.ini`): verificado con capturas deterministas y `XCDE_GRAPHICS_LIVE=<frame>:<clave>=<valor>,...` (2026-11-17; bloom Desactivado: ~17 pases de render menos por frame). Las antiguas casillas experimentales (`effects_off`) se convierten al cargar en Desactivado.
 
 ## Optimización interna
 
@@ -32,7 +32,7 @@ No se han reescrito el direccionamiento global por ventanas, el traductor de con
 
 ## Configuración y diagnóstico
 
-Se conservan `gpu_preset = balanced|performance`; se añaden `potato|custom`. Nuevas claves: `dynamic_min_height`, `dynamic_max_height` (0 conserva el comportamiento relativo a ventana), `effects_off` (máscara de cinco efectos) y `low_memory`. Cargar un INI antiguo conserva sus ajustes individuales: aplicar un perfil es una acción explícita. Launcher y menú usan `runtime/quality_policy.h`.
+Se conservan `gpu_preset = balanced|performance`; se añaden `potato|custom`. Nuevas claves: `dynamic_min_height`, `dynamic_max_height` (0 conserva el comportamiento relativo a ventana), `effects_off` (máscara de cinco efectos; desde 2026-11-17 se convierte al cargar en la opción Desactivado de `ambient_occlusion`, `reflections`, `bloom`, `godrays` y `cloud_shadows`, y ya no tiene casillas propias) y `low_memory`. Cargar un INI antiguo conserva sus ajustes individuales: aplicar un perfil es una acción explícita. Launcher y menú usan `runtime/quality_policy.h`.
 
 `Play Monado (performance metrics).bat` escribe `build/native_metrics.csv`. Activa perfilado detallado, así que las comparaciones deben usar el mismo modo. Registra FPS nativos/intervalos, tiempo GPU, CPU/esperas/presentación, llamadas de descriptores y bytes de staging; las categorías de tiempo pueden solaparse y no deben sumarse. El escritor vacía periódicamente el buffer y en las capturas planificadas; un cierre forzado puede perder su último tramo.
 

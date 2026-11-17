@@ -128,11 +128,8 @@ static void maybe_edit(File *f) {
         extern bool tmp_jitter_active(void);
         if (g_settings.taa_off || tmp_jitter_active()) { if (*edits) strcat(edits, ","); strcat(edits, "tmaa=off"); }
     }
-    // T259: opt-in, whitelisted cosmetic edits. Mods are read first; explicit diagnostic edits below win.
-    static const char *effect_keys[]={"tssao=off", "ssr=off", "bloom=off", "godray=off", "shadowCloud=off"};
-    for (unsigned i=0;i<5;i++) if (g_settings.effects_off&(1u<<i)) {
-        if (*edits) strcat(edits,","); strcat(edits,effect_keys[i]);
-    }
+    // (T259's boot-time tssao/ssr/bloom/godray/shadowCloud edits are gone: those choices apply live through
+    // graphics_options.h gfx_overlay, which also skips the passes - bloom Off: ~17 fewer render passes per frame.)
     const char *e = getenv("XCDE_LIBNX");
     if (e && *e) { if (*edits) strcat(edits, ","); strncat(edits, e, sizeof edits - strlen(edits) - 1); }
     if (*edits) edit_ini(f, edits);

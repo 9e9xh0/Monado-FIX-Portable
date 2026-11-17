@@ -28,5 +28,11 @@ int main(void) {
     o.value[GFX_BLOOM]=999;assert(gfx_value(gfx_pack(&o),GFX_BLOOM)==0);
     for(unsigned i=0;i<sizeof source;i++)assert(source[i]==0x55);
     xcde_graphics_copy(0);xcde_graphics_copy(UINT64_MAX);xcde_graphics_copy(0x7100000001ull);
+    {   // legacy effects_off: a set bit turns its option Off unless the user chose otherwise; the mask is cleared
+        GraphicsOptions l={0}; unsigned mask=31u; l.value[GFX_BLOOM]=2;
+        gfx_fold_effects_off(&l,&mask);
+        assert(!mask && l.value[GFX_AO]==1 && l.value[GFX_REFLECTIONS]==1 && l.value[GFX_BLOOM]==2);
+        assert(l.value[GFX_GODRAYS]==1 && l.value[GFX_CLOUD]==1 && !l.value[GFX_SHAFTS]);
+    }
     puts("Graphics choices, authored-copy restoration and invalid-address guards: OK");
 }

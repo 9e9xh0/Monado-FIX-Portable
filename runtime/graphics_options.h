@@ -111,8 +111,19 @@ static inline const char *gfx_display_lang(int i, int v, int en) {
     if (i == GFX_FILTERING) return gfx_display(i, v);
     return i == GFX_SHADOW_MASK || i == GFX_EFFECTS_RES ? full[v] : tri[v];
 }
-// The options shown in the launcher / F1 menu, in display order. The effect toggles in quality_controls.h keep the
-// lib_nx SSR / bloom / god rays / cloud shadows switches; AO is shown here only (Original / Off / On / Classic), so
-// there is a single Ambient occlusion control. The others stay available as xcde.ini keys.
-static const int gfx_ui_options[] = {GFX_SHADOWS, GFX_SHADOW_MAPS, GFX_SHADOW_MASK, GFX_AO, GFX_PROP_LOD, GFX_FILTERING,
-                                     GFX_SHAFTS, GFX_MOTION_BLUR, GFX_FUR_BLUR};
+// [XCDE] The launcher and F1 show every option once, grouped as below (Monado-Reborn's layout). The old
+// "experimental cosmetic reductions" checkboxes (xcde.ini effects_off, a 5-bit mask: TSSAO, SSR, bloom, god rays,
+// cloud shadows) were a second switch for the same effects - two "ambient occlusion" controls in two places. They
+// are folded into these choices at load (gfx_fold_effects_off). All five apply live (F1) in both directions: checked
+// in deterministic captures with XCDE_GRAPHICS_LIVE (hle/graphics.c), and Off skips the passes, not just their output.
+static const int gfx_ui_shadows[] = {GFX_SHADOWS, GFX_SHADOW_MAPS, GFX_SHADOW_MASK, GFX_CLOUD};
+static const int gfx_ui_detail[] = {GFX_PROP_LOD, GFX_FILTERING};
+static const int gfx_ui_effects[] = {GFX_AO, GFX_REFLECTIONS, GFX_BLOOM, GFX_GODRAYS, GFX_SHAFTS, GFX_MOTION_BLUR, GFX_FUR_BLUR};
+// effects_off bit i -> the option it switched off (quality_policy.h EFFECT_* order).
+static const int gfx_effect_bits[5] = {GFX_AO, GFX_REFLECTIONS, GFX_BLOOM, GFX_GODRAYS, GFX_CLOUD};
+// A legacy bit turns its option Off unless the user already chose something other than Original; the mask is cleared.
+static inline void gfx_fold_effects_off(GraphicsOptions *o, unsigned *effects_off) {
+    for (int i = 0; i < 5; i++)
+        if ((*effects_off & (1u << i)) && o->value[gfx_effect_bits[i]] == 0) o->value[gfx_effect_bits[i]] = 1;
+    *effects_off = 0;
+}
