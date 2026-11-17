@@ -1,0 +1,28 @@
+--- a/qemu/accel/tcg/translate-all.c
++++ b/qemu/accel/tcg/translate-all.c
+@@ -769,6 +769,9 @@
+ 
+ #if TCG_TARGET_REG_BITS == 32
+ #define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (32 * MiB)
++#elif defined(_WIN32)
++/* Monado (GitHub #104): Windows commits the buffer up front (alloc_code_gen_buffer), so the default stays small. */
++#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (64 * MiB)
+ #else /* TCG_TARGET_REG_BITS == 64 */
+ /*
+  * We expect most system emulation to run one or two guests per host.
+@@ -917,6 +920,15 @@
+     uint8_t *ptr;
+     void* handler = code_gen_buffer_handler;
+ 
++    /* Monado (GitHub #104): commit the whole buffer up front instead of reserving it and committing on demand from a
++       vectored exception handler (registered last in the chain). On some PCs the deliberate first-touch access
++       violation was never resolved and Windows stopped the process (0xC0000409) at the first uc_mem_map.
++       Upstream made the same change the default after 2.1.4 (unicorn-engine/unicorn#2364, WIN32_ENABLE_VEH off). The
++       default size is 64 MiB on Windows (DEFAULT_CODE_GEN_BUFFER_SIZE_1), so the commit stays cheap. */
++    if (size) {
++        return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
++    }
++
+     may_remove_handler(uc);    
+ 
+     // Naive trampoline implementation

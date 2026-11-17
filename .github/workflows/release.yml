@@ -200,11 +200,24 @@ jobs:
             mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-vulkan-memory-allocator mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-gcc
             make nasm diffutils curl tar
+      # Build-time caches (each step below is only rebuilt when its own inputs change): FFmpeg, the patched unicorn
+      # and the FSR 4 Lite preparation tool are pinned, so their outputs are cached by the hash of what builds them;
+      # zig's compiler cache is restored from the newest run, so unchanged C/C++ files are not compiled again.
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\msys64\opt\ffmpeg-min
+          key: ffmpeg-windows-${{ hashFiles('scripts/build_ffmpeg.sh') }}-v1
       - name: FFmpeg 9.0.2 - minimal LGPL (VP9 + Vorbis from WebM, no GPL codec libraries)
         # The MSYS2 ffmpeg package is a full build: its import tables pull 99 DLLs (137 MB) into the ZIP. The runtime
         # only decodes the 14 VP9 + Vorbis cutscenes (runtime/hle/movie.c), so build that subset instead.
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
-        run: bash scripts/build_ffmpeg.sh --prefix /ucrt64
+        run: bash scripts/build_ffmpeg.sh --prefix /opt/ffmpeg-min
+      - name: Install FFmpeg into UCRT64
+        shell: msys2 {0}
+        run: cp -r /opt/ffmpeg-min/. /ucrt64/
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -212,6 +225,25 @@ jobs:
         run: |
           python -m venv .venv
           .venv\Scripts\python -m pip install -q "ziglang==$env:ZIG_VERSION" capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 cmake ninja pyinstaller zstandard
+      - name: Restore the patched unicorn
+        id: unicorn-cache
+        uses: actions/cache@v4
+        with:
+          path: build/unicorn
+          key: unicorn-windows-${{ hashFiles('tools/build_unicorn.py', 'tools/unicorn/*.patch') }}-v1
+      - name: unicorn 2.1.4 with the Windows code buffer committed up front (GitHub #104)
+        # The frozen builder ships this library instead of the wheel's: tools/build_unicorn.py says why. --check
+        # emulates one instruction with faulthandler on and fails on any fault.
+        run: |
+          $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
+          $skip = if ('${{ steps.unicorn-cache.outputs.cache-hit }}' -eq 'true') { '--skip-build' } else { $null }
+          .venv\Scripts\python tools/build_unicorn.py --install --check $skip
+      - name: Restore the zig cache
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\zig
+          key: zig-windows-${{ env.ZIG_VERSION }}-${{ github.run_id }}
+          restore-keys: zig-windows-${{ env.ZIG_VERSION }}-
       - name: AMD FSR 3 runtime (official FidelityFX SDK 1.1.4) and NVIDIA DLSS (official Streamline, hash-pinned)
         run: |
           Invoke-WebRequest -Uri $env:FFX_URL -OutFile ffx.zip
@@ -226,7 +258,14 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw 'amd_fidelityfx_vk.dll is not validly signed' }
           Remove-Item ffx.zip
           .venv\Scripts\python tools/install_dlss.py
+      - name: Restore zig's C runtime for the game code library
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\zig-prelink
+          key: prelink-windows-${{ env.ZIG_VERSION }}-${{ hashFiles('tools/gamebuild_stage.py', 'tools/game_id.py') }}-v1
       - name: Stage the first-start builder (with the executable's import library)
+        env:
+          MONADO_PRELINK_CACHE: ${{ runner.temp }}\zig-prelink
         run: .venv\Scripts\python tools/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a
       - name: Build the release runtime, launcher and FSR 4 Lite component
         run: |
@@ -238,7 +277,14 @@ jobs:
           }
       - name: Freeze the builder
         run: .venv\Scripts\python tools/freeze_gamebuild.py --python .venv\Scripts\python.exe
+      - name: Restore the FSR 4 Lite preparation tool
+        id: fsr4prep-cache
+        uses: actions/cache@v4
+        with:
+          path: build/fsr4prep
+          key: fsr4prep-windows-${{ hashFiles('tools/build_fsr4prep.py', 'tools/fsr4_prepare.py', 'tools/gamebuild_stage.py', 'third_party/fsr4cap/**') }}-zig${{ env.ZIG_VERSION }}-v1
       - name: FSR 4 Lite preparation tool
+        if: steps.fsr4prep-cache.outputs.cache-hit != 'true'
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
           .venv\Scripts\python tools/build_fsr4prep.py
