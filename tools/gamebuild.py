@@ -163,9 +163,14 @@ def load_profile(resources):
     return json.loads((resources / 'games/profile.json').read_text(encoding='utf-8'))
 
 
-def validate(dump, resources):
+def validate(dump, resources, strict=False):
     import check_dump
-    result = check_dump.check_dump(str(dump), load_profile(resources))
+    # GitHub #132: the module build-ids prove the version; a romfs from another region differs only in localized data
+    # (bdat/menu sizes), so it is built with a warning instead of being refused. --strict-dump asks for the reference
+    # dump exactly (the source-build check_dump default is also strict-capable with --strict).
+    result = check_dump.check_dump(str(dump), load_profile(resources), allow_romfs_variant=not strict)
+    for warning in result.warnings:
+        print(f'gamebuild: warning: {warning.strip()}', flush=True)
     if not result.ok:
         raise SystemExit(f'gamebuild: {dump}: ' + '; '.join(result.messages))
 
@@ -305,6 +310,9 @@ def main(argv=None):
     parser.add_argument('--jobs', type=int, help='parallel compilations (default: up to 8)')
     parser.add_argument('--force', action='store_true', help='rebuild even when nothing changed')
     parser.add_argument('--dry-run', action='store_true', help='print the steps instead of building')
+    parser.add_argument('--strict-dump', action='store_true',
+                        help='refuse a romfs that differs from the reference dump (other regions are accepted '
+                             'with a warning by default)')
     args = parser.parse_args(argv)
 
     resources = resources_dir(args.resources)
@@ -323,7 +331,7 @@ def main(argv=None):
                 return 0
         except (OSError, ValueError):
             pass
-    validate(dump, resources)
+    validate(dump, resources, strict=args.strict_dump)
     if args.dry_run:
         print(f'gamebuild: would build {library} from {dump} with {resources / link["compiler"]}')
         return 0

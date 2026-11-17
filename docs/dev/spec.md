@@ -32,9 +32,10 @@ wrong dump, the message explains the problem.
    extracted content is needed, without reading the file.
 3. **Given** an exefs of another version, **when** it is validated, **then** the detected and expected (2.0.0)
    versions are shown.
-4. **Given** an incomplete romfs, **when** it is validated, **then** the folders with missing (or differently sized)
-   files are named before building. (The manifest is aggregated per folder + a hash, so the game's file list is not
-   published: Art. I.)
+4. **Given** an incomplete romfs, **when** it is validated, **then** the folders with missing files are named and the
+   build is refused. **Given** a 2.0.0 romfs from another region (same build-ids, different `bdat`/`menu` sizes),
+   **when** it is validated, **then** the differing folders are named as warnings and the build continues. (The
+   manifest is aggregated per folder + a hash, so the game's file list is not published: Art. I.)
 5. **Given** an interrupted build, **when** it is started again, **then** it continues from the last verified step.
 
 ---
@@ -143,8 +144,10 @@ The developer can record and replay input, compare builds frame by frame, profil
 - **FR-001**: The system MUST accept a folder with extracted `exefs/` and `romfs/`, or their contents.
 - **FR-002**: The system MUST refuse encrypted containers (`.nsp`, `.xci`, `.nca`, `.nsz`, `.xcz`) without reading them.
 - **FR-003**: The system MUST verify version 2.0.0 by the modules' build-id (`main` `7e1df8e08d60544b…`).
-- **FR-004**: The system MUST verify the romfs is complete (expected counts and sizes per folder and a hash of the list
-  of paths and sizes).
+- **FR-004**: The system MUST verify the romfs is complete: the expected top-level folders and their file counts. The
+  manifest (counts and sizes per folder and a hash of the list of paths and sizes) MUST be reported; size or name
+  differences from the reference dump MUST be warnings (regional dumps differ, the build-id is the version gate) and
+  MUST be refused only in strict mode.
 - **FR-005**: The build MUST be resumable step by step and keep a log per step.
 - **FR-006**: The build MUST work in paths with spaces and non-ASCII characters.
 - **FR-007**: The build MUST NOT require the player to install Python, compilers or SDKs by hand. (Not met yet: the

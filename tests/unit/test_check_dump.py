@@ -121,7 +121,7 @@ class TestRejections(Base):
 
     def test_truncated_file_is_detected_by_size(self):
         wb(os.path.join(self.romfs, 'b', 'three.bin'), bytes(2))
-        r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile, allow_romfs_variant=False)
         self.assertFalse(r.ok)
         self.assertEqual(r.code, cd.ERR_ROMFS)
 
@@ -136,6 +136,42 @@ class TestRejections(Base):
         wb(os.path.join(os.path.dirname(self.exefs), 'prod.keys'), 'master_key_00 = ' + 'ab' * 16, 'w')
         r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
         self.assertNotIn('abababab', '\n'.join(r.messages))
+
+
+class TestOtherRegions(Base):
+    """GitHub #132: another region has the same build-ids and different localized data in the romfs."""
+
+    def test_different_sizes_are_accepted_with_a_warning(self):
+        wb(os.path.join(self.romfs, 'a', 'one.bin'), bytes(11))
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
+        self.assertTrue(r.ok, r.messages)
+        self.assertIn("'a'", '\n'.join(r.warnings))
+
+    def test_different_sizes_are_refused_in_strict_mode(self):
+        wb(os.path.join(self.romfs, 'a', 'one.bin'), bytes(11))
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile, allow_romfs_variant=False)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, cd.ERR_ROMFS)
+
+    def test_same_sizes_with_different_names_are_accepted_with_a_warning(self):
+        os.rename(os.path.join(self.romfs, 'a', 'one.bin'), os.path.join(self.romfs, 'a', 'uno.bin'))
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
+        self.assertTrue(r.ok, r.messages)
+        self.assertIn('different file names', '\n'.join(r.warnings))
+
+    def test_extra_folder_is_accepted_with_a_warning(self):
+        os.makedirs(os.path.join(self.romfs, 'c'))
+        wb(os.path.join(self.romfs, 'c', 'extra.bin'), b'x')
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
+        self.assertTrue(r.ok, r.messages)
+        self.assertIn("unexpected folder 'c'", '\n'.join(r.warnings))
+
+    def test_missing_file_is_still_refused(self):
+        os.remove(os.path.join(self.romfs, 'a', 'two.bin'))
+        r = cd.check_dump(os.path.dirname(self.exefs), self.profile)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, cd.ERR_ROMFS)
+        self.assertIn("'a'", '\n'.join(r.messages))
 
 
 if __name__ == '__main__':
