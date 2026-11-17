@@ -21,6 +21,8 @@ int main(void) {
     o.value[GFX_SHADOWS]=1;gfx_overlay(dest,gfx_pack(&o));
     const unsigned floats[]={0x368,0x47c,0x2b0,0x2b4};
     for(unsigned i=0;i<4;i++){float f;memcpy(&f,dest+floats[i],4);assert(f==0);}
+    memset(&o,0,sizeof o);o.value[GFX_AO]=GFX_AO_CLASSIC;memcpy(dest,source,sizeof source);gfx_overlay(dest,gfx_pack(&o));
+    assert(dest[0x17c]==0 && dest[0x19c]==1); // #125: Classic = temporal AO off, per-frame SSAO on
     memset(&o,0,sizeof o);memcpy(dest,source,sizeof source);gfx_overlay(dest,gfx_pack(&o));
     assert(!memcmp(dest,source,sizeof source)); // next authored copy restores all fields
     o.value[GFX_BLOOM]=999;assert(gfx_value(gfx_pack(&o),GFX_BLOOM)==0);
