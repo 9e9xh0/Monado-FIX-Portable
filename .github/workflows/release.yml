@@ -317,7 +317,7 @@ jobs:
       - name: Build the release runtime, launcher and FSR 4 Lite component
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
-          cmake --preset windows -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" -DMONADO_PGO=build/pgo/monado.profdata
+          cmake --preset windows -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" "-DMONADO_PGO=build/pgo/monado.profdata"
           cmake --build build/cmake/release
           foreach ($f in 'build/xcde.exe', 'build/xcde_launcher.exe', 'build/monado_fsr4.dll', 'build/gamebuild/xcde_imports.a') {
             if (-not (Test-Path $f)) { throw "missing $f" }
