@@ -47,7 +47,10 @@ def prelink(dest, platform):
     crt.mkdir()
     with tempfile.TemporaryDirectory(prefix='monado-prelink-') as temp:
         work = Path(temp)
-        cache = work / 'cache'
+        # MONADO_PRELINK_CACHE: a lasting zig cache for this probe (CI keeps it between runs, so zig's C runtime is
+        # built once per zig version and guest flags instead of on every package build).
+        cache = Path(os.environ['MONADO_PRELINK_CACHE']) if os.environ.get('MONADO_PRELINK_CACHE') else work / 'cache'
+        cache.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, ZIG_LIB_DIR=str(dest / 'compiler' / 'lib'),
                    ZIG_GLOBAL_CACHE_DIR=str(cache), ZIG_LOCAL_CACHE_DIR=str(cache))
         (work / 'obj').mkdir()

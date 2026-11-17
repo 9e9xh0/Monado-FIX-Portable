@@ -9,6 +9,7 @@
 *.tsv   text eol=lf
 *.json  text eol=lf
 *.yml   text eol=lf
+*.patch text eol=lf
 *.ps1   text eol=crlf
 *.bat   text eol=crlf
 *.bin   binary

@@ -82,11 +82,29 @@ def run_tool(command, env, log, what, timeout, stream=False):
     return result
 
 
+def control_flow_guard():
+    """Whether Windows enforces Control Flow Guard here (GitHub #104: on one PC it did despite the frozen builder's
+    cleared CFG flag; the shipped unicorn copes with it, older ones died in VCRUNTIME140's longjmp)."""
+    try:
+        import ctypes
+        flags = ctypes.c_uint32(0)
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        if not kernel32.GetProcessMitigationPolicy(ctypes.c_void_p(kernel32.GetCurrentProcess()), 7,  # CFG policy
+                                                   ctypes.byref(flags), ctypes.sizeof(flags)):
+            return f'unknown (error {ctypes.get_last_error()})'
+        return ('on' + (', strict' if flags.value & 4 else '')) if flags.value & 1 else 'off'
+    except Exception as error:  # (diagnostic only)
+        return f'unknown ({error})'
+
+
 def describe_compiler(resources, out, link, log):
     """The compiler's version and settings (its cache folder above all) at the top of the log."""
     compiler = resources / link['compiler']
     env = compiler_env(resources, out, link)
     note(log, f'platform {sys.platform}, {os.cpu_count()} CPUs, compiler {compiler}')
+    if os.name == 'nt':
+        note(log, f'Control Flow Guard in this process: {control_flow_guard()}')
     note(log, f'ZIG_LIB_DIR={env.get("ZIG_LIB_DIR", "(unset)")} ZIG_GLOBAL_CACHE_DIR={env["ZIG_GLOBAL_CACHE_DIR"]} '
               f'link: {"prebuilt C runtime" if link.get("lld") else "zig cc"}')
     for args in (['version'], ['env']):
