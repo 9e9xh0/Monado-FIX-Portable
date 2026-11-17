@@ -1467,27 +1467,23 @@ static bool ti_presented;              // texture_info's last answer
 static uint32_t ti_alloc[2];
 static int g_draw_wide_remap;          // the wide-box classification's verdict for the current draw: 1 = non-composite
 
-// [XCDE] GitHub #120: #96's own-pixel gather is right only for the 2:1 depth downsample (scaled depth -> half-size
-// target: a half-res pixel's physical 2x2 is exactly its footprint). Other passes gather depth at arbitrary uvs and
-// weight the four samples in guest texels; a physical 2x2 there drew a fixed grid over sunlit surfaces. Those keep
-// the guest-texel gather (#45). XCDE_RGATHER_DEPTH_ALL=1: every depth gather reads its own pixels (#96 as merged).
-static bool depth_gather_own_pixels(int stage, const uint32_t alloc[2]) {
+// [XCDE] GitHub #120: #96's own-pixel depth gather needs an integer render scale. The half-res depth it builds is
+// read back by passes that still sample guest-texel centres; at an integer scale those centres sit at the same place
+// in every cell, but at a fractional one (1.5x: 1080p from 720p) they skip every third physical texel, and per-pixel
+// depth turned that into a fixed grid over sunlit surfaces. Fractional scales keep the guest-texel path, as with
+// XCDE_RGATHER_DEPTH=1 (confirmed gridless by the reporter); integer scales keep #96 unchanged.
+// XCDE_RGATHER_DEPTH_ALL=1: own pixels at every scale (#96 as merged).
+static bool depth_gather_own_pixels(const float sc[2]) {
     static int all = -1;
     if (all < 0) { const char *e = getenv("XCDE_RGATHER_DEPTH_ALL"); all = e && *e == '1'; }
-    if (all) return true;
-    TexBackend *rt = stage == 1 && st.rt.ncolor && st.rt.color[0] ? (TexBackend *)st.rt.color[0]->backend : NULL;
-    bool own = rt && alloc[0] > 1 && alloc[1] > 1 && abs((int)alloc[0] - 2 * (int)rt->width) <= 1 &&
-               abs((int)alloc[1] - 2 * (int)rt->height) <= 1;
+    bool own = all || (sc[0] == floorf(sc[0]) && sc[1] == floorf(sc[1]));
     static int nlog;
-    if (nlog < 24) {
-        static uint32_t seen[24][4];
-        uint32_t k[4] = {alloc[0], alloc[1], rt ? rt->width : 0, rt ? rt->height : 0};
-        bool dup = false;
-        for (int i = 0; i < nlog && !dup; i++) dup = !memcmp(seen[i], k, sizeof k);
-        if (!dup) {
-            memcpy(seen[nlog++], k, sizeof k);
-            LOG("[gather] depth %ux%u -> target %ux%u: %s\n", k[0], k[1], k[2], k[3], own ? "own pixels" : "guest texels");
-        }
+    static float seen[8][2];
+    bool dup = false;
+    for (int i = 0; i < nlog && !dup; i++) dup = seen[i][0] == sc[0] && seen[i][1] == sc[1];
+    if (!dup && nlog < 8) {
+        seen[nlog][0] = sc[0]; seen[nlog][1] = sc[1]; nlog++;
+        LOG("[gather] depth textures at scale %.3fx%.3f: %s\n", sc[0], sc[1], own ? "own pixels" : "guest texels");
     }
     return own;
 }
@@ -5543,7 +5539,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             {   // [XCDE] #96: XCDE_RGATHER_DEPTH=1 keeps the guest-texel gather on depth textures too (the old behaviour)
                 static int guest = -1;
                 if (guest < 0) { const char *g = getenv("XCDE_RGATHER_DEPTH"); guest = g && *g == '1'; }
-                ti_depth = !guest && renderer_format_is_depth(e->tex->format);
+                ti_depth = !guest && renderer_format_is_depth(e->tex->format) && depth_gather_own_pixels(sc);  // #120
             }
             TexBackend *tb = (TexBackend *)e->tex->backend;
             ti_presented = tb && tb->presented;
@@ -5741,7 +5737,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
             for (int t = 0; t < si->ntex && t < 64; t++) {
                 rs[1 + t][0] = tex_sc[sg][t][0]; rs[1 + t][1] = tex_sc[sg][t][1]; rs[1 + t][2] = tex_d16[sg][t];
-                rs[1 + t][3] = tex_depth[sg][t] && depth_gather_own_pixels(stage, tex_alloc[sg][t]);  // #96 / #120
+                rs[1 + t][3] = tex_depth[sg][t];  // [XCDE] #96: rgather's depth flag
                 if (stage == 1 && g_hr.on && g_hr.vs_hit && si->tex[t].scaled_gather && tex_wh[sg][t][0] == g_hr.w &&
                     tex_wh[sg][t][1] == g_hr.h && tex_sc[sg][t][0] == g_hr.sx && tex_sc[sg][t][1] == g_hr.sy)
                     rs[1 + t][3] = 1;  // (the half-res grid now runs at its physical size: its own texels)
