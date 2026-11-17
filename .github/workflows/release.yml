@@ -205,7 +205,7 @@ jobs:
       # zig's compiler cache is restored from the newest run, so unchanged C/C++ files are not compiled again.
       - name: Restore FFmpeg
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: C:\msys64\opt\ffmpeg-min
           key: ffmpeg-windows-${{ hashFiles('scripts/build_ffmpeg.sh') }}-v1
@@ -215,6 +215,12 @@ jobs:
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: bash scripts/build_ffmpeg.sh --prefix /opt/ffmpeg-min
+      - name: Save FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\msys64\opt\ffmpeg-min
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       - name: Install FFmpeg into UCRT64
         shell: msys2 {0}
         run: cp -r /opt/ffmpeg-min/. /ucrt64/
@@ -227,7 +233,7 @@ jobs:
           .venv\Scripts\python -m pip install -q "ziglang==$env:ZIG_VERSION" capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 cmake ninja pyinstaller zstandard
       - name: Restore the patched unicorn
         id: unicorn-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: build/unicorn
           key: unicorn-windows-${{ hashFiles('tools/build_unicorn.py', 'tools/unicorn/*.patch') }}-v1
@@ -238,6 +244,12 @@ jobs:
           $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
           $skip = if ('${{ steps.unicorn-cache.outputs.cache-hit }}' -eq 'true') { '--skip-build' } else { $null }
           .venv\Scripts\python tools/build_unicorn.py --install --check $skip
+      - name: Save the patched unicorn
+        if: steps.unicorn-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/unicorn
+          key: ${{ steps.unicorn-cache.outputs.cache-primary-key }}
       - name: Restore the zig cache
         uses: actions/cache@v4
         with:
@@ -259,7 +271,8 @@ jobs:
           Remove-Item ffx.zip
           .venv\Scripts\python tools/install_dlss.py
       - name: Restore zig's C runtime for the game code library
-        uses: actions/cache@v4
+        id: prelink-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}\zig-prelink
           key: prelink-windows-${{ env.ZIG_VERSION }}-${{ hashFiles('tools/gamebuild_stage.py', 'tools/game_id.py') }}-v1
@@ -267,6 +280,12 @@ jobs:
         env:
           MONADO_PRELINK_CACHE: ${{ runner.temp }}\zig-prelink
         run: .venv\Scripts\python tools/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a
+      - name: Save zig's C runtime for the game code library
+        if: steps.prelink-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}\zig-prelink
+          key: ${{ steps.prelink-cache.outputs.cache-primary-key }}
       - name: Build the release runtime, launcher and FSR 4 Lite component
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
@@ -279,7 +298,7 @@ jobs:
         run: .venv\Scripts\python tools/freeze_gamebuild.py --python .venv\Scripts\python.exe
       - name: Restore the FSR 4 Lite preparation tool
         id: fsr4prep-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: build/fsr4prep
           key: fsr4prep-windows-${{ hashFiles('tools/build_fsr4prep.py', 'tools/fsr4_prepare.py', 'tools/gamebuild_stage.py', 'third_party/fsr4cap/**') }}-zig${{ env.ZIG_VERSION }}-v1
@@ -288,6 +307,12 @@ jobs:
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
           .venv\Scripts\python tools/build_fsr4prep.py
+      - name: Save the FSR 4 Lite preparation tool
+        if: steps.fsr4prep-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/fsr4prep
+          key: ${{ steps.fsr4prep-cache.outputs.cache-primary-key }}
       - name: Package the ZIP (checked with tools/package_guard.py)
         env:
           VERSION: ${{ needs.version.outputs.version }}

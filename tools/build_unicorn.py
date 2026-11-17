@@ -13,7 +13,7 @@ must match the unicorn Python package (same version): --install replaces the pac
 PyInstaller's --collect-all unicorn picks it up. --check runs a short emulation in a fresh interpreter with
 faulthandler on: with the patch there is no first-touch access violation, so any reported fault fails the check.
 
-Windows needs CMake and Visual Studio 2022 (the generator the official wheels use); other hosts use Ninja and the
+Windows needs CMake and Visual Studio (the generator the official wheels use; CMake picks the newest); other hosts use Ninja and the
 system compiler (useful only to test this script: their unicorn has no such handler).
 """
 import argparse
@@ -100,7 +100,8 @@ def build(out):
         args = ['cmake', '-S', src, '-B', build_dir, '-DCMAKE_BUILD_TYPE=Release', '-DUNICORN_ARCH=aarch64',
                 '-DUNICORN_BUILD_TESTS=OFF', '-DUNICORN_INSTALL=OFF', '-DBUILD_SHARED_LIBS=ON',
                 '-DUNICORN_LEGACY_STATIC_ARCHIVE=OFF']
-        args += ['-G', 'Visual Studio 17 2022', '-A', 'x64'] if WINDOWS else ['-G', 'Ninja']
+        # Windows: CMake's default generator, the newest Visual Studio installed (runner images move on: VS 2022, 2026)
+        args += ['-A', 'x64'] if WINDOWS else ['-G', 'Ninja']
         run(args)
         run(['cmake', '--build', build_dir, '--config', 'Release', '--parallel'])
         found = [p for p in build_dir.rglob(LIBRARY) if p.is_file()]
