@@ -1017,6 +1017,23 @@ static pid_t g_gc_proc;
 static bool g_gc_then_play, g_gc_play_now, g_gc_auto;
 static float g_gc_frac;
 static std::string g_gc_text;
+// Time left: measured from the first progress the builder reports (a resumed build skips the chunks it already
+// compiled, so its first seconds say nothing about the speed of the rest), smoothed so the number does not jump.
+static Uint64 g_gc_t0;
+static float g_gc_f0 = -1, g_gc_eta = -1;
+static std::string gc_eta_text(Uint64 now, float frac) {
+    if (g_gc_f0 < 0) { g_gc_t0 = now; g_gc_f0 = frac; }
+    float seconds = (float)(now - g_gc_t0) / 1000.0f, moved = frac - g_gc_f0;
+    if (seconds < 8 || moved < 0.02f) return g.ui_lang ? "estimating time left" : "calculando el tiempo restante";
+    float eta = seconds * (1.0f - frac) / moved;
+    g_gc_eta = g_gc_eta < 0 || eta < g_gc_eta ? eta : g_gc_eta * 0.9f + eta * 0.1f;
+    int left = (int)(g_gc_eta + 0.5f);
+    char t[64];
+    if (left < 60) snprintf(t, sizeof t, "%s", g.ui_lang ? "less than a minute left" : "menos de un minuto");
+    else if (left < 120) snprintf(t, sizeof t, "%s", g.ui_lang ? "about 1 minute left" : "1 minuto aprox.");
+    else snprintf(t, sizeof t, g.ui_lang ? "about %d minutes left" : "%d minutos aprox.", (left + 30) / 60);
+    return t;
+}
 static std::string gc_dir() {  // the packaged builder and its resources (read-only)
     const char *env = getenv("XCDE_GAMEBUILD_DIR");  // (AppRun: inside the AppImage)
     if (env && *env) return env;
@@ -1107,6 +1124,7 @@ static bool gc_start(bool then_play) {
 #endif
     g_gc_then_play = then_play;
     g_gc_frac = 0;
+    g_gc_f0 = g_gc_eta = -1;
     g_gc_text = g.ui_lang ? "Reading the game files..." : "Leyendo los archivos del juego...";
     g_status = g.ui_lang ? "Preparing the game code from your game files (only once, a few minutes)" :
                            "Preparando el código del juego desde tus archivos (solo una vez, unos minutos)";
@@ -1142,12 +1160,20 @@ static void gc_poll() {
         unsigned long long done = 0, total = 0;
         if (fscanf(f, "%23s %llu %llu", phase, &done, &total) == 3 && total) {
             int step = !strcmp(phase, "generate") ? 0 : !strcmp(phase, "compile") ? 1 : 2;
-            g_gc_frac = (step + (float)done / (float)total) / 3.0f;
-            char t[160];
+            // Line 2 (builders from v16.1): the whole build's progress weighted by how long each step takes. An older
+            // builder has none: each step is a third of the bar, as before, with no time estimate.
+            float overall = -1;
+            char line[256];
+            while (fgets(line, sizeof line, f))
+                if (sscanf(line, "overall %f", &overall) == 1) break;
+            bool timed = overall >= 0;
+            g_gc_frac = timed ? overall : (step + (float)done / (float)total) / 3.0f;
+            char t[224];
             if (step == 0) snprintf(t, sizeof t, g.ui_lang ? "Reading the game code: %llu of %llu" : "Leyendo el código del juego: %llu de %llu", done, total);
             else if (step == 1) snprintf(t, sizeof t, g.ui_lang ? "Compiling the game code: %llu of %llu files" : "Compilando el código del juego: %llu de %llu archivos", done, total);
             else snprintf(t, sizeof t, "%s", g.ui_lang ? "Linking the game code..." : "Enlazando el código del juego...");
             g_gc_text = t;
+            if (timed && step < 2) g_gc_text += " (" + gc_eta_text(now, g_gc_frac) + ")";
         }
         fclose(f);
     }

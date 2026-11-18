@@ -19,6 +19,7 @@ beside the executable, or `../share/monado/gamebuild` in an AppImage):
 
 Usage: monado-gamebuild --root <dump> [--out DIR] [--resources DIR] [--jobs N]
                         [--force] [--dry-run]
+       gamebuild.py --write-costs <gamebuild.log> games/xcde/compile_cost.json   (after a release's lifter change)
 Exit codes: 0 ok, 1 usage, 2 bad game files, 3 generation failed, 4 compile failed,
 5 link failed. Progress is written for the launcher: `<out>/progress.txt`.
 """
@@ -116,6 +117,45 @@ def describe_compiler(resources, out, link, log):
         except SystemExit:
             pass  # (already logged; the build itself decides)
 
+# Peak memory of one compiler job: 340 MB measured (zig cc -O2 with the profile, the slowest chunk), doubled.
+JOB_MEMORY = 768 << 20
+
+
+def available_memory():
+    """Bytes of memory free for new processes, or None when the system does not say."""
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [('length', ctypes.c_uint32), ('load', ctypes.c_uint32), ('total_phys', ctypes.c_uint64),
+                            ('avail_phys', ctypes.c_uint64), ('total_page', ctypes.c_uint64),
+                            ('avail_page', ctypes.c_uint64), ('total_virtual', ctypes.c_uint64),
+                            ('avail_virtual', ctypes.c_uint64), ('avail_extended', ctypes.c_uint64)]
+            status = Status()
+            status.length = ctypes.sizeof(Status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.avail_phys
+            return None
+        with open('/proc/meminfo', encoding='ascii') as meminfo:
+            for line in meminfo:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def default_jobs():
+    """One compiler per CPU, as many as the free memory holds (at least 2). It used to stop at 8: a 16-CPU PC
+    compiled at half speed."""
+    cpus = os.cpu_count() or 4
+    memory = available_memory()
+    if memory is None:
+        return min(8, cpus)
+    return max(2, min(cpus, memory // JOB_MEMORY))
+
+
 def default_data_root():
     override = os.environ.get('LARECOMP_DATA_ROOT') or os.environ.get('MONADO_DATA_ROOT')
     if override:
@@ -144,12 +184,44 @@ def progress_file(out):
     return out / 'progress.txt'
 
 
-def report(out, phase, done, total, text=''):
+# The launcher's bar and time estimate: the share of the whole build each step takes. Lifting runs on one core, the
+# compilation on `jobs` of them. Reference PC (8 cores / 16 threads): lifting 84 s; compiling 158 s with 8 jobs, 149 s
+# with 9 and 104 s with 16, i.e. COMPILE_RATIO times the lifting divided by the effective parallelism, where a job past
+# half the CPUs (the second thread of a core) adds about half a core. The link is ~10 s on a first build (zig builds
+# its C runtime once), the last LINK_SHARE of the bar.
+COMPILE_RATIO = 15.0
+LINK_SHARE = 0.05
+_shares = {'generate': 0.5}
+
+
+def set_shares(jobs, cpus=None):
+    cores = max(1, (cpus or os.cpu_count() or 2) // 2)
+    jobs = max(1, jobs)
+    effective = min(jobs, cores) + 0.5 * max(0, jobs - cores)
+    _shares['generate'] = (1 - LINK_SHARE) / (1 + COMPILE_RATIO / effective)
+
+
+def overall(phase, fraction):
+    """The whole build's progress (0..1) from the progress of one step."""
+    generate = _shares['generate']
+    if phase == 'generate':
+        return generate * fraction
+    if phase == 'compile':
+        return generate + (1 - LINK_SHARE - generate) * fraction
+    return 1 - LINK_SHARE + LINK_SHARE * fraction
+
+
+def report(out, phase, done, total, text='', fraction=None):
+    """`<phase> <done> <total> <text>`, then `overall <0..1>`: the launcher's bar (time-weighted, so it moves at a
+    steady pace and gives a time estimate). Older launchers read the first line only."""
     path = progress_file(out)
+    if fraction is None:
+        fraction = done / total if total else 1.0
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(f'{phase} {done} {total} {text}\n', encoding='utf-8')
+        temporary.write_text(f'{phase} {done} {total} {text}\noverall {overall(phase, fraction):.4f}\n',
+                             encoding='utf-8')
         os.replace(temporary, path)
     except OSError:
         pass  # a progress file the launcher cannot read must never fail the build
@@ -199,8 +271,11 @@ def generate_modules(dump, resources, out, jobs, log):
     modules = [m for m in profile['modules'] if m.get('lift')]
     generated = out / 'generated'
     generated.mkdir(parents=True, exist_ok=True)
+    # Lifting time follows the module's size (main and sdk are 6.6 and 5.4 MB): the bar moves by bytes, not modules.
+    sizes = [(dump / 'exefs' / m['name']).stat().st_size for m in modules]
+    total_size = sum(sizes) or 1
     for index, module in enumerate(modules):
-        report(out, 'generate', index, len(modules), f'Reading {module["name"]}')
+        report(out, 'generate', index, len(modules), f'Reading {module["name"]}', sum(sizes[:index]) / total_size)
         argv = [module['name'], str(dump / 'exefs' / module['name']), str(module['base']),
                 str(generated / module['name']),
                 '--simd', 'c',
@@ -255,6 +330,35 @@ def pgo_flags(resources, link):
     return _PGO_FLAGS[path]
 
 
+# A chunk missing from compile_cost.json: about 1.3 s per MB of C (the median chunk of the reference build).
+SECONDS_PER_BYTE = 1.3e-6
+
+
+def compile_costs(resources):
+    """{chunk: seconds} from the reference build, or {} (an old or missing file only changes the order)."""
+    try:
+        costs = json.loads((resources / 'games/compile_cost.json').read_text(encoding='utf-8'))['seconds']
+        return {key: float(value) for key, value in costs.items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def write_compile_costs(log_path, dest):
+    """games/xcde/compile_cost.json from a build's gamebuild.log (chunk names and seconds only, nothing of the game)."""
+    import re
+    seconds = {}
+    for match in re.finditer(r'\] compile (\S+\.c): exit 0 after ([0-9.]+)s', Path(log_path).read_text(errors='replace')):
+        seconds[match.group(1)] = round(float(match.group(2)), 1)
+    if not seconds:
+        raise SystemExit(f'gamebuild: no compile times in {log_path}')
+    Path(dest).write_text(json.dumps({
+        'note': 'Seconds per chunk from one reference build (tools/gamebuild.py --write-costs). The builder starts '
+                'the slowest first; a stale file only changes that order.',
+        'seconds': dict(sorted(seconds.items())),
+    }, indent=1) + '\n', encoding='utf-8')
+    print(f'gamebuild: {len(seconds)} chunk times -> {dest}')
+
+
 def compile_units(resources, out, link, jobs, log):
     """Compile every generated chunk with the bundled compiler, in parallel."""
     compiler = resources / link['compiler']
@@ -272,28 +376,46 @@ def compile_units(resources, out, link, jobs, log):
             previous = json.loads(stamp.read_text(encoding='utf-8')).get('units', {})
         except (OSError, ValueError):
             previous = {}
-    done = [0]
+    # The slowest chunks start first, so the end of the build is many small chunks in parallel instead of one that
+    # happened to come last. Before this, sdk_090 (67 s on its own) started 80 s into the compilation and the build
+    # waited for it alone. Its source size says nothing about it (a 400 KB chunk; others twice its size take 2 s), so
+    # the order comes from the times of a reference build (games/compile_cost.json). Chunks it doesn't list are
+    # estimated from their size. The bar moves by those expected seconds. The link keeps the sorted order.
+    sizes = {source: source.stat().st_size for source in units}
+    hints = compile_costs(resources)
+    costs = {source: hints.get(source.relative_to(generated).as_posix(), sizes[source] * SECONDS_PER_BYTE)
+             for source in units}
+    total_cost = sum(costs.values()) or 1
+    done = [0, 0]  # chunks, expected seconds
+    progress_lock = threading.Lock()
     failures = []
+
+    def finished(source, key):
+        with progress_lock:
+            done[0] += 1
+            done[1] += costs[source]
+            report(out, 'compile', done[0], len(units), f'Compiling {key}', done[1] / total_cost)
 
     def build(source):
         target = objects / source.parent.name / (source.stem + '.o')
         target.parent.mkdir(parents=True, exist_ok=True)
         key = source.relative_to(generated).as_posix()
-        signature = f'{source.stat().st_size} {int(source.stat().st_mtime)}'
+        signature = f'{sizes[source]} {int(source.stat().st_mtime)}'
         if previous.get(key) == signature and target.is_file():
-            done[0] += 1
+            finished(source, key)
             return key, signature, target
         command = ([str(compiler)] + list(link.get('compile', ['cc'])) + list(link.get('guest_flags', [])) +
                    pgo_flags(resources, link) + [f'-I{item}' for item in include] + ['-c', str(source), '-o', str(target)])
         result = run_tool(command, compiler_env(resources, out, link), log, f'compile {key}', COMPILE_TIMEOUT)
         if result.returncode != 0:
             failures.append(f'{key}:\n{result.stdout}{result.stderr}')
-        done[0] += 1
-        report(out, 'compile', done[0], len(units), f'Compiling {key}')
+        finished(source, key)
         return key, signature, target
 
+    slowest_first = sorted(units, key=lambda source: -costs[source])
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(build, units))
+        built = dict(zip(slowest_first, pool.map(build, slowest_first)))
+    results = [built[source] for source in units]
     if failures:
         log.write('\n'.join(failures))
         log.flush()
@@ -342,22 +464,31 @@ def link_library(resources, out, link, units, log):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Build the game code library from a local game dump.')
-    parser.add_argument('--root', required=True, help='folder holding exefs/ and romfs/')
+    parser.add_argument('--root', help='folder holding exefs/ and romfs/')
     parser.add_argument('--out', help='build folder (default: <data root>/gamebuild)')
     parser.add_argument('--resources', help='shipped gamebuild resources')
-    parser.add_argument('--jobs', type=int, help='parallel compilations (default: up to 8)')
+    parser.add_argument('--jobs', type=int,
+                        help='parallel compilations (default: one per CPU, as many as the free memory allows)')
     parser.add_argument('--force', action='store_true', help='rebuild even when nothing changed')
     parser.add_argument('--dry-run', action='store_true', help='print the steps instead of building')
     parser.add_argument('--strict-dump', action='store_true',
                         help='refuse a romfs that differs from the reference dump (other regions are accepted '
                              'with a warning by default)')
+    parser.add_argument('--write-costs', nargs=2, metavar=('LOG', 'JSON'),
+                        help='write the chunk compile times of a gamebuild.log to games/xcde/compile_cost.json')
     args = parser.parse_args(argv)
+    if args.write_costs:
+        write_compile_costs(*args.write_costs)
+        return 0
+    if not args.root:
+        parser.error('--root is required')
 
     resources = resources_dir(args.resources)
     link = json.loads((resources / 'link.json').read_text(encoding='utf-8'))
     dump = Path(args.root).expanduser().resolve()
     out = Path(args.out).expanduser().resolve() if args.out else default_data_root() / 'gamebuild'
-    jobs = args.jobs or min(8, os.cpu_count() or 4)
+    jobs = args.jobs or default_jobs()
+    set_shares(jobs)
     library = out / os.path.basename(link['library'])
     current = fingerprint(dump, resources, link)
     stamp = out / 'build.json'
