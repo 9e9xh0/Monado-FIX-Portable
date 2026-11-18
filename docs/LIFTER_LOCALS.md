@@ -38,10 +38,46 @@ The change alters the generated C and `cpu.h`, so it changes `GAMELIB_ID` (playe
 makes the published PGO profile stale: retrain it (docs/PGO.md) before release; the release workflow's `pgo` job
 fails on a stale profile.
 
-## General registers in locals (not done)
+## General registers in locals (done)
 
-TotK keeps each function's 6 most used X registers and SP in locals and, after a call, reloads only X0-X18 and X30,
-trusting AAPCS64's callee-saved X19-X29 and SP. Our earlier attempt with every register in locals (T165) cost 5.6%
-more instructions. With `Cpu *restrict c` most of the benefit TotK describes (registers kept across guest stores)
-is already there; what remains is mostly the callee-saved trust, which needs proof that nothing changes X19-X29 or SP
-of a running function behind its back (longjmp, C++ exceptions, fibers, the runtime writing a running thread's Cpu).
+`tools/lifter/regs.py` (ported from TotK Recomp). Each function keeps its 6 most used X registers and SP in C locals,
+loaded at entry, stored back only where they changed since the last sync, before a call, an SVC, a trap, a return or
+a tail exit. After a call only X0-X18 and X30 are reloaded: AAPCS64 has the callee preserve X19-X29 and SP. The same
+functions as for the flags take part; the others keep every register in the `Cpu`.
+
+`Cpu *restrict c` already let clang keep registers across guest loads and stores, so what this adds is mostly that
+callee-saved trust and fewer stores. Our earlier attempt with every register in locals (T165) cost 5.6% more
+instructions; 6 per function is TotK's measured best.
+
+**Why the trust holds in XC:DE** (checked 2026-11-18):
+
+- Guest fibers: each has its own host fiber and `Cpu` (`runtime/hle/fibers.c`); switching never changes the caller's.
+- Reboot and ExitThread longjmp out of the whole thread; the dropped frames never run again (`kernel.c`).
+- HLE code that calls back into the guest restores the whole `Cpu` (`party.c` `call_guest`) or the link register
+  (`heaps.c`, whose guest callees follow AAPCS64 themselves). The runtime writes no X19-X29 of a running thread;
+  `c->sp` only on a new fiber's `Cpu` and inside those save / restore pairs.
+- The generated code hands the `Cpu` to the runtime only through `rt_dispatch`, `rt_svc` and `rt_udf`; no SIMD / FP
+  helper reads X registers.
+- longjmp and the C++ unwinder exist in sdk, but nothing calls them directly and main imports neither. Their lifted
+  entry points call `rt_trust_fault`, which stops the game with a message, so a call through a pointer cannot run on
+  with stale registers. If that ever fires, regenerate with `XCDE_CALLEE_TRUST=0`.
+
+`XCDE_REG_LOCALS=<n>` (0: off) and `XCDE_CALLEE_TRUST=0` change the generator for experiments; releases use the
+defaults, since `GAMELIB_ID` hashes the generator's files, not the environment.
+
+**Checked:** frame hashes identical to the original code on every frame of both routes (59,969 and 44,993 frames);
+`rt_trust_fault` never fired. The executable shrank further, from 72.8 MB to 69.9 MB.
+
+**Measured** (same setup, against flags only, 2 runs each):
+
+| | Boot | Title and menus | Field | Whole run |
+|---|---|---|---|---|
+| Flags only | 2.80 / 2.81 ms | 3.12 / 3.14 ms | 11.39 / 11.58 ms | 4.94 / 5.00 ms |
+| Flags + registers | 2.78 / 2.78 ms | 3.11 / 3.09 ms | 11.01 / 11.25 ms | 4.85 / 4.87 ms |
+
+Field -3.1%, whole run -2.2%; with the flags, about -7% in the field against plain -O2.
+
+## V registers in locals (not done)
+
+TotK also keeps each function's 8 most used V registers in a `u128 vr[32]` that clang holds in XMM registers
+(`recomp/vlocals.py`). Not tried here yet.

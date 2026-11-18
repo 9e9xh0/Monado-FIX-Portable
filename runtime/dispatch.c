@@ -253,6 +253,15 @@ void rt_udf(Cpu *c, uint64_t pc) {
     FATAL("undefined instruction / trap at %llx\n", pc);
 }
 
+// [XCDE] The generated code trusts AAPCS64: after a call it does not reload X19-X29 and SP (tools/lifter/regs.py).
+// longjmp and the C++ unwinder break that; nothing in XC:DE calls them (docs/LIFTER_LOCALS.md), and their lifted
+// entry points call this, so a call through a pointer stops here instead of running on with stale registers.
+void rt_trust_fault(Cpu *c, uint64_t pc) {
+    (void)c;
+    FATAL("guest %llx (longjmp / C++ exception) reached: the generated code's callee-saved register trust does not "
+          "hold here; regenerate with XCDE_CALLEE_TRUST=0 (tools/lifter/gen.py)\n", pc);
+}
+
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) {
     (void)c;
     FATAL("brk #%u at %llx\n", imm, pc);

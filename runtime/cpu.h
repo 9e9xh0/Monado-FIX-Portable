@@ -34,6 +34,7 @@ void rt_dispatch(Cpu *c);                 // call function at c->pc
 void rt_svc(Cpu *c, uint32_t imm, uint64_t pc);
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) __attribute__((noreturn));
 void rt_udf(Cpu *c, uint64_t pc) __attribute__((noreturn));
+void rt_trust_fault(Cpu *c, uint64_t pc) __attribute__((noreturn));  // (tools/lifter/regs.py)
 uint64_t rt_ticks(void);
 
 #if defined(__aarch64__)
