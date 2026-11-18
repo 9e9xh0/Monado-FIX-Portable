@@ -30,11 +30,12 @@ AMD shader/model assets are separate; their full SDK notice is preserved in
 and asset preparation. Upstream benchmark logging still says "FSR 4.1.1";
 Monado's `[fsr4]` log identifies the explicitly selected Lite 4.1.2 model.
 
-Windows prefers the native mixed-dot feature when available. Otherwise it uses
+Both Windows and Linux prefer the native mixed-dot feature when available (RADV). Otherwise it uses
 `portable_dot.h` to expand the captured prepass
 `OpFDot2MixAcc32VALVE` into FP32 conversion, dot and accumulation before module
 creation. This removes the VALVE mixed-dot extension requirement; Lite does not
 use compute derivatives. The INT8 graph/model assets are unchanged on disk.
-Linux keeps the native shader path. Structural SPIR-V validation passes for all
-48 Lite modules; Windows driver execution and floating-point image differences
+`XCDE_FSR4_PORTABLE_DOT=1` forces the portable path on a driver that has the feature (testing).
+Structural SPIR-V validation passes for all
+48 Lite modules; driver execution of the portable path (Windows, Intel ANV, NVIDIA) and floating-point image differences
 remain subject to gameplay validation.

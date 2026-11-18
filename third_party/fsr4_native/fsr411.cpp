@@ -8,9 +8,7 @@
 // and other group counts (Rules).
 
 #include "fsr411.h"
-#ifdef _WIN32
 #include "portable_dot.h"
-#endif
 #include <cstdlib>
 // [XCDE] T-FSR4-LITE: no dependency on bbport environment helpers.
 #define bb_env std::getenv
@@ -343,9 +341,7 @@ struct Upscaler::Impl {
     VkPhysicalDeviceMemoryProperties memory{};
     VkDeviceSize ubo_align = 256;
     PFN_vkCmdPushDescriptorSetKHR push_descriptors = nullptr;
-#ifdef _WIN32
     bool portable_dot = true;
-#endif
 
     // Current set and sizes.
     std::string set;
@@ -399,7 +395,6 @@ struct Upscaler::Impl {
         rules = Choose(dir, features);
         vkGetPhysicalDeviceMemoryProperties(physical, &memory);
         VkPhysicalDeviceProperties props;
-#ifdef _WIN32
         uint32_t count = 0;
         vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         std::vector<VkExtensionProperties> extensions(count);
@@ -411,9 +406,9 @@ struct Upscaler::Impl {
             VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
             features.pNext = &mixed;
             vkGetPhysicalDeviceFeatures2(physical, &features);
-            portable_dot = !mixed.shaderMixedFloatDotProductFloat16AccFloat32;
+            const char* forced = bb_env("XCDE_FSR4_PORTABLE_DOT");
+            portable_dot = !mixed.shaderMixedFloatDotProductFloat16AccFloat32 || (forced && *forced == '1');
         }
-#endif
         vkGetPhysicalDeviceProperties(physical, &props);
         ubo_align = std::max<VkDeviceSize>(256, props.limits.minUniformBufferOffsetAlignment);
         push_descriptors = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(
@@ -596,12 +591,10 @@ struct Upscaler::Impl {
         }
         std::vector<uint32_t> words(bytes.size() / 4);
         std::memcpy(words.data(), bytes.data(), bytes.size());
-#ifdef _WIN32
         if (portable_dot && !PortableDot(words)) {
             error = path + ": portable mixed-dot conversion failed";
             return false;
         }
-#endif
         Pass& p = passes[index];
         if (!Reflect(words, p.refl, error)) {
             error = path + ": " + error;
