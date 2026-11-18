@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import game_id  # noqa: E402
 
 HEADERS = ('cpu.h', 'simd.h', 'simd_fp.h', 'gamelib.h')
-GAMES = ('profile.json', 'patches.py', 'hle_symbols.txt')
+GAMES = ('profile.json', 'patches.py', 'hle_symbols.txt', 'compile_cost.json')
 # Everything the zig frontend needs to compile and link C for one platform. The rest of
 # the bundled toolchain (other targets, C++ standard library, debugger) is dropped:
 # `zig cc` is all the guest code ever uses.
