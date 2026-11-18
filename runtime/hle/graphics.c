@@ -10,10 +10,24 @@ void xcde_graphics_publish(const GraphicsOptions *o) { atomic_store_explicit(&re
 // the fields our previous overlay actually changed, before native camera setup.
 // A new native copy supersedes that saved state. This makes On/Off -> Original
 // reversible while preserving camera restrictions and authored/mod values.
-static const unsigned overlay_offsets[]={0x3ad,0x17c,0x19c,0x492,0x3c,0xec,0x520,0x204,0x53d,0x368,0x47c,0x2b0,0x2b4};
-static unsigned overlay_width(unsigned field) { return field<9 ? 1 : 4; }
-_Static_assert(sizeof overlay_offsets/sizeof *overlay_offsets<=32,"overlay field mask");
-typedef struct { uint64_t address; uint32_t changed; uint8_t before[13][4],after[13][4]; } GraphicsView;
+// (the last field, 0x111, is the game's temporal AA flag (lib_nx.ini tmaa): see xcde_game_taa_off below)
+static const unsigned overlay_offsets[]={0x3ad,0x17c,0x19c,0x492,0x3c,0xec,0x520,0x204,0x53d,0x368,0x47c,0x2b0,0x2b4,0x111};
+enum { OVERLAY_FIELDS = sizeof overlay_offsets/sizeof *overlay_offsets };
+static unsigned overlay_width(unsigned field) { return field<9 || field==13 ? 1 : 4; }
+_Static_assert(OVERLAY_FIELDS<=32,"overlay field mask");
+typedef struct { uint64_t address; uint32_t changed; uint8_t before[OVERLAY_FIELDS][4],after[OVERLAY_FIELDS][4]; } GraphicsView;
+
+// [XCDE] The game's temporal AA, live. Its on/off flag is byte 0x111 of this configuration copy (tmaa=on 1 / off 0: the
+// only byte that differs). Cleared here per frame, the game drops its TAA resolve pass at once and the image is the
+// same as a tmaa=off boot; set again (also after a tmaa=off boot), the resolve comes back the same as a tmaa=on boot
+// (both byte-identical in field and menu captures) - it keeps its buffers either way. Off for xcde.ini taa = 0 (F1)
+// and under a temporal upscaler (FSR 3 / FSR 4 Lite / DLSS do the anti-aliasing; the game's TAA would blur their
+// jittered input, GitHub #14), switched with the upscaler too. This replaces the old boot-time lib_nx.ini tmaa=off edit.
+// The renderer publishes the decision every presented frame (runtime/nvn/vulkan/device.c), so this file needs neither
+// the settings nor the Vulkan side (the native tests link it alone).
+static _Atomic bool taa_off;
+void xcde_graphics_taa_off(bool off) { atomic_store_explicit(&taa_off,off,memory_order_release); }
+static bool xcde_game_taa_off(void) { return atomic_load_explicit(&taa_off,memory_order_acquire); }
 static GraphicsView views[128];
 static pthread_mutex_t view_lock=PTHREAD_MUTEX_INITIALIZER;
 RT_ON_RESET(graphics_view_reset) { memset(views,0,sizeof views); }
@@ -40,7 +54,7 @@ void xcde_graphics_begin(uint64_t destination) {
     pthread_mutex_lock(&view_lock);
     GraphicsView *v=find_view(destination,0);
     uint8_t *p=(uint8_t *)(uintptr_t)destination;
-    if(v)for(unsigned i=0;i<sizeof overlay_offsets/sizeof *overlay_offsets;i++)
+    if(v)for(unsigned i=0;i<OVERLAY_FIELDS;i++)
         if((v->changed&(1u<<i)) && !memcmp(p+overlay_offsets[i],v->after[i],overlay_width(i)))
             memcpy(p+overlay_offsets[i],v->before[i],overlay_width(i));
     if(v)v->changed=0;
@@ -53,10 +67,11 @@ void xcde_graphics_finish(uint64_t destination) {
     pthread_mutex_lock(&view_lock);
     GraphicsView *v=find_view(destination,1);
     if(v) {
-        for(unsigned i=0;i<sizeof overlay_offsets/sizeof *overlay_offsets;i++)memcpy(v->before[i],p+overlay_offsets[i],overlay_width(i));
+        for(unsigned i=0;i<OVERLAY_FIELDS;i++)memcpy(v->before[i],p+overlay_offsets[i],overlay_width(i));
         gfx_overlay(p,bits);
+        if(xcde_game_taa_off())p[0x111]=0;
         v->changed=0;
-        for(unsigned i=0;i<sizeof overlay_offsets/sizeof *overlay_offsets;i++)
+        for(unsigned i=0;i<OVERLAY_FIELDS;i++)
             {
                 memcpy(v->after[i],p+overlay_offsets[i],overlay_width(i));
                 if(memcmp(v->before[i],v->after[i],overlay_width(i)))v->changed|=1u<<i;
@@ -67,8 +82,8 @@ void xcde_graphics_finish(uint64_t destination) {
     static uint64_t last=UINT64_MAX;
     if(bits==last)return;
     last=bits;
-    fprintf(stderr,"[graphics-final] options=%llx cloud=%u tssao=%u ssao=%u ssr=%u bloom=%u godrays=%u shafts=%u motion=%u fur=%u\n",
-        (unsigned long long)bits,p[0x3ad],p[0x17c],p[0x19c],p[0x492],p[0x3c],p[0xec],p[0x520],p[0x204],p[0x53d]);
+    fprintf(stderr,"[graphics-final] options=%llx cloud=%u tssao=%u ssao=%u ssr=%u bloom=%u godrays=%u shafts=%u motion=%u fur=%u taa=%u\n",
+        (unsigned long long)bits,p[0x3ad],p[0x17c],p[0x19c],p[0x492],p[0x3c],p[0xec],p[0x520],p[0x204],p[0x53d],p[0x111]);
 }
 
 // Size and LOD choices are latched on first use: UI changes require a restart,

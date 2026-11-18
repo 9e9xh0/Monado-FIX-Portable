@@ -1565,6 +1565,11 @@ void backend_present(NvnTexture *t) {
     save_editor_frame(total_frames);
     extern void vk_level_change_check(void);
     vk_level_change_check();
+    {   // [XCDE] the game's temporal AA, live: off for xcde.ini taa = 0 and while a temporal upscaler does the AA
+        extern bool tmp_jitter_active(void);
+        extern void xcde_graphics_taa_off(bool off);
+        xcde_graphics_taa_off(g_settings.taa_off || tmp_jitter_active());
+    }
     static long shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("LARECOMP_SCREENSHOT_EVERY"); shot_every = e ? atol(e) : 0; }
     extern bool g_debug_frame;

@@ -30,6 +30,7 @@ void vk_request_swapchain_recreate(void);
 bool dlss_available(void);
 const char *dlss_status(void);
 bool diag_deterministic(void);
+bool tmp_jitter_active(void);  // a temporal upscaler is selected: the game's TAA is off (runtime/hle/graphics.c)
 void plat_terminate(void);  // [XCDE] GitHub #22: the F1 menu's "exit the game" button (the platform's immediate exit)
 // [XCDE] GitHub #39: what the performance overlay (perf_overlay.h) reads
 int xcde_present_fps(void);
@@ -188,7 +189,7 @@ static const char *const k_en[][2] = {
     {"Calidad", "Quality"}, {"Antialiasing SMAA", "SMAA anti-aliasing"},
     {"Profundidad de campo", "Depth of field"},
     {"Antialiasing y desenfoque de movimiento del juego (al reiniciar)", "The game's anti-aliasing and motion blur (after a restart)"},
-    {"Antialiasing temporal (TAA) del juego (al reiniciar)", "The game's temporal anti-aliasing (TAA) (after a restart)"},
+    {"Antialiasing temporal (TAA) del juego", "The game's temporal anti-aliasing (TAA)"},
     {"Mostrar FPS en la barra de título", "Show FPS in the title bar"}, {"Velocidad", "Speed"}, {"30 (como en Switch)", "30 (like Switch)"},
     {"Sin límite", "Unlímited"}, {"FPS (al reiniciar)", "FPS (after a restart)"}, {"V-Sync (con 30 / 60 FPS)", "V-Sync (at 30 / 60 FPS)"},
     {"Volumen", "Volume"}, {"Audio de los vídeos (al reiniciar)", "Video sound (after a restart)"},
@@ -314,8 +315,19 @@ static void ui(void) {
             bool smaa = g_settings.antialias == AA_SMAA;
             if (ImGui::Checkbox(T("Antialiasing SMAA"), &smaa)) g_settings.antialias = smaa ? AA_SMAA : AA_OFF;
             ImGui::Checkbox(T("Antialiasing y desenfoque de movimiento del juego (al reiniciar)"), &g_settings.game_blur);
-            bool taa = !g_settings.taa_off;
-            if (ImGui::Checkbox(T("Antialiasing temporal (TAA) del juego (al reiniciar)"), &taa)) g_settings.taa_off = !taa;
+            {   // [XCDE] live (runtime/hle/graphics.c xcde_game_taa_off); a temporal upscaler replaces it
+                bool by_upscaler = tmp_jitter_active();
+                bool taa = !g_settings.taa_off && !by_upscaler;
+                ImGui::BeginDisabled(by_upscaler);
+                if (ImGui::Checkbox(T("Antialiasing temporal (TAA) del juego"), &taa)) g_settings.taa_off = !taa;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_ForTooltip))
+                    ImGui::SetTooltip("%s", by_upscaler
+                        ? (en ? "Off while FSR 3 / FSR 4 / DLSS is selected: the upscaler does the anti-aliasing."
+                              : "Desactivado con FSR 3 / FSR 4 / DLSS: el escalador hace el antialiasing.")
+                        : (en ? "Applies at once. Smooths edges and small highlights; a little softer image."
+                              : "Se aplica al instante. Suaviza bordes y brillos pequeños; imagen algo más suave."));
+            }
             ImGui::SeparatorText(en ? "Shadows" : "Sombras");
             if (monado_gfx_group(&g_settings.graphics, gfx_ui_shadows, en)) xcde_graphics_publish(&g_settings.graphics);  // (live; the ones marked "restart" apply at the next start)
             ImGui::SeparatorText(en ? "Detail" : "Detalle");

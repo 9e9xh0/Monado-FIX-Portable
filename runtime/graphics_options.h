@@ -1,5 +1,6 @@
 // [XCDE] T-GRAPHICS-SCALABILITY: shared typed controls and persistence.
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -85,6 +86,7 @@ static inline void gfx_overlay(uint8_t *p,uint64_t b) {
 extern "C" {
 #endif
 void xcde_graphics_publish(const GraphicsOptions *o);
+void xcde_graphics_taa_off(bool off);  // the game's temporal AA off this frame (runtime/hle/graphics.c)
 void xcde_graphics_copy(uint64_t destination);
 void xcde_graphics_forget(uint64_t destination);
 void xcde_graphics_begin(uint64_t destination);
