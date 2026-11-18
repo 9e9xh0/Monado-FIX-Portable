@@ -396,7 +396,12 @@ static void party_probe(Cpu *c, uint64_t frame) {
 
 // [XCDE] run speed multiplier (GitHub #100). The game's own movement update (f_70004463b0, see the patch in
 // games/xcde/patches.py) computes the max horizontal velocity rate as `state * [movement + 0x11c]`; scale that
-// product so the game itself runs faster, with its own collisions, ground handling, battles and scenes.
+// product so the controlled leader moves faster with its own collisions, ground handling and movement. The same
+// function also runs for followers and NPCs, so run_speed_leader() locates the field leader (the same slot_entity
+// path the earlier position version used) and caches its controller object; the helper also accepts the player
+// controller class as a fallback when a story switch leaves the field group behind. The patch passes the controller
+// being updated (x20), so only the leader's controller is scaled. No positions are written; the game computes the
+// movement itself.
 // Off by default: XCDE_RUN_SCALE (1.0 = original, for tests), xcde.ini run_speed for players.
 static float run_scale(void) {
     static int init;
@@ -414,15 +419,43 @@ static float run_scale(void) {
     return env_set ? env : g_settings.run_speed;
 }
 
-// Called from the f_70004463b0 patch: rate is the game's rate (s8) and speed its movement speed (s0), as float bits.
-uint32_t xcde_run_speed_mul(uint32_t rate, uint32_t speed) {
+// The field leader (slot 0 of the field group) whose update f_70004463b0 handles. It runs every frame and only reads:
+// no position writes, so the old menu/scene guards are not needed. The patch's x20 is the character's controller
+// object (the character object from slot_entity + 0x1908; its movement component is the +0x1a38 sibling), so cache
+// that controller, not the character object itself.
+#define RUN_CONTROLLER_OFFSET 0x1908ull
+// The controlled leader's controller class (f_70004463b0's x20): 0x7000b591b8, while followers/NPCs use
+// 0x7000b58660. It is the fallback when a story switch (prologue: Dunban -> Shulk) leaves the field group cache behind.
+#define PLAYER_CONTROLLER_VTABLE 0x7000b591b8ull
+static volatile uint64_t g_run_leader;
+
+static void run_speed_leader(Cpu *c) {
+    g_run_leader = 0;
+    if (!(run_scale() > 1.0f)) return;
+    Found f;
+    found_get(&f);
+    uint64_t fo = found_one(&f, K_FIELD);
+    uint64_t g = fo ? field_group(c, fo + 0x20) : 0;
+    uint64_t obj = 0;
+    if (g) slot_entity(c, fo, g, 0, &obj, NULL);
+    if (obj) g_run_leader = obj + RUN_CONTROLLER_OFFSET;
+}
+
+// Called from the f_70004463b0 patch: rate is the game's rate (s8), speed its movement speed (s0) and obj the character
+// controller being updated (x20), as float bits / guest pointer. Only the controlled leader gets the multiplier: its
+// cached controller, or the player-controller class after a story switch moved control to another character.
+uint32_t xcde_run_speed_mul(uint32_t rate, uint32_t speed, uint64_t obj) {
     float scale = run_scale();
     static int reported;
-    if (!reported && scale > 1.0f) { reported = 1; LOG("[run] game speed x%.2f (setting %.2f)\n", scale, g_settings.run_speed); }
     float x, y, out;
     memcpy(&x, &rate, 4);
     memcpy(&y, &speed, 4);
-    out = x * y * scale;
+    out = x * y;
+    bool leader = obj && (obj == g_run_leader || *(volatile uint64_t *)(uintptr_t)obj == PLAYER_CONTROLLER_VTABLE);
+    if (scale > 1.0f && leader) {  // (also rejects a NaN setting: no movement change)
+        if (!reported) { reported = 1; LOG("[run] leader game speed x%.2f (setting %.2f)\n", scale, g_settings.run_speed); }
+        out *= scale;
+    }
     uint32_t bits;
     memcpy(&bits, &out, 4);
     return bits;
@@ -1103,6 +1136,7 @@ void party_game_tick(Cpu *c, uint64_t frame) {
     ent_scan(c, frame);
     debug_fixed(c, frame);
     debug_tour(c, frame);
+    run_speed_leader(c);
     extern bool g_party_switch;
     static uint64_t at[16];
     static int nat = -1;
@@ -1115,14 +1149,14 @@ void party_game_tick(Cpu *c, uint64_t frame) {
     }
 #ifdef _WIN32
     static bool scanner;
-    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used)) {  // (only with an option on: no thread, no scans otherwise)
+    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used || run_scale() > 1.0f)) {  // (only with an option on: no thread, no scans otherwise)
         scanner = true;
         HANDLE t = CreateThread(NULL, 0, party_scanner, NULL, 0, NULL);
         if (t) { SetThreadPriority(t, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(t); }
     }
 #else
     static bool scanner;
-    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used)) {
+    if (!scanner && (g_party_switch || nat || g_art_used || g_cam_used || g_warp_used || run_scale() > 1.0f)) {
         scanner = true;
         pthread_t t;
         if (!pthread_create(&t, NULL, party_scanner, NULL)) pthread_detach(t);

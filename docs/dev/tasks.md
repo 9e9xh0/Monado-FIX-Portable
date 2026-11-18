@@ -1497,12 +1497,18 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   aplicarse. Ahora se parchea el propio cálculo del juego (`f_70004463b0`, `fmul s0, s8, s0` en `0x7000446520`): el
   cheat de la comunidad para 2.0.0 (`[Speed mod x2]`, BID `7E1DF8E08D60544B`) sustituye ese producto por 2.0 fijo;
   aquí `runtime/hle/party.c` (`xcde_run_speed_mul`) conserva la tasa que calcula el juego y la multiplica por el ajuste.
-  Así el juego se mueve más rápido con sus propias colisiones, suelo, batallas y escenas; no se tocan las posiciones ni
-  la Y (los saltos no se aceleran, como corresponde a una tasa horizontal). Se elimina `run_speed_tick` y el escáner
-  ya no arranca sólo por esta opción.
+  Así el líder se mueve más rápido con sus propias colisiones y suelo; no se tocan las posiciones ni la Y (los saltos
+  no se aceleran, como corresponde a una tasa horizontal). Sólo el líder: la función también se ejecuta para
+  seguidores y NPCs, pero `xcde_run_speed_mul` compara el controlador del personaje (x20) con el del líder del grupo
+  de campo (el objeto del personaje +0x1908, refrescado por `run_speed_leader`) o con la clase del controlador del
+  jugador (0x7000b591b8; los seguidores/NPCs usan 0x7000b58660), que sigue al líder cuando el cambio de historia del
+  prólogo deja atrás el grupo de campo. No escribe posiciones, así que no necesita las guardas de menú/escena de la
+  versión anterior. Se elimina `run_speed_tick`; el escáner de party vuelve a arrancar con esta opción, sólo para
+  identificar al líder.
   Pruebas: build Windows; el ajuste no cambia (`test_settings_roundtrip.c` cubre 1.5 de entrada y 2.0 tras
-  guardar/cargar); el mantenedor confirma en juego el prólogo y el estado posterior a la escena con x2 (antes fallaba
-  después de la escena).
+  guardar/cargar); partida nueva 2026-11-18: el registro muestra `[run] leader game speed x2.00 (setting 2.00)`, la
+  velocidad funciona desde el prólogo (Dunban) y sigue tras el cambio de historia a Shulk (antes se perdía ahí); sólo
+  se escala el controlador del líder, seguidores y NPCs conservan la tasa del juego.
 
 ## Tamaño del HUD — 2026-11-17 (T271)
 
