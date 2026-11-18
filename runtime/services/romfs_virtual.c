@@ -123,11 +123,9 @@ static void maybe_edit(File *f) {
     // [XCDE] #125: ambient occlusion Classic = the game's per-frame SSAO, not the temporal one (restart: the game sets
     // its AO passes up from lib_nx.ini at boot; graphics_options.h gfx_overlay keeps the live flags in step)
     if (g_settings.graphics.value[GFX_AO] == GFX_AO_CLASSIC) { if (*edits) strcat(edits, ","); strcat(edits, "tssao=off,ssao=on"); }
-    // [XCDE] xcde.ini taa = 0 (or the revived jitter): the game's temporal AA off; its other AA and motion blur as above
-    {
-        extern bool tmp_jitter_active(void);
-        if (g_settings.taa_off || tmp_jitter_active()) { if (*edits) strcat(edits, ","); strcat(edits, "tmaa=off"); }
-    }
+    // [XCDE] The game's temporal AA (tmaa) is no longer edited here: xcde.ini taa = 0 and the temporal upscalers turn it
+    // off live, per frame (runtime/hle/graphics.c xcde_game_taa_off), so the F1 toggle and an upscaler switch apply at
+    // once. tmaa stays as the game (or a mod) authored it; XCDE_LIBNX=tmaa=off still forces it at boot for tests.
     // (T259's boot-time tssao/ssr/bloom/godray/shadowCloud edits are gone: those choices apply live through
     // graphics_options.h gfx_overlay, which also skips the passes - bloom Off: ~17 fewer render passes per frame.)
     const char *e = getenv("XCDE_LIBNX");
