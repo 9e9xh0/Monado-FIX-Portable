@@ -77,6 +77,19 @@ defaults, since `GAMELIB_ID` hashes the generator's files, not the environment.
 
 Field -3.1%, whole run -2.2%; with the flags, about -7% in the field against plain -O2.
 
+## With the profile
+
+The PGO profile was retrained for this code (scripted routes plus a play session; 12,528 game functions with counts).
+Against what players ran before (-O1, no profile, packed flags, registers in the Cpu), field from a save, 2 runs each:
+
+| | Boot | Title and menus | Field | Whole run |
+|---|---|---|---|---|
+| -O1 | 2.86 / 2.82 ms | 3.20 / 3.20 ms | 13.25 / 13.22 ms | 5.45 / 5.41 ms |
+| PGO + flags + registers | 2.68 / 2.66 ms | 3.06 / 2.97 ms | 10.29 / 10.32 ms | 4.61 / 4.58 ms |
+
+Field -22.1%, whole run -15.4% (PGO alone: -15.2% in the field). The field was part of the training, so this is a
+best case for unseen scenes.
+
 ## V registers in locals (not done)
 
 TotK also keeps each function's 8 most used V registers in a `u128 vr[32]` that clang holds in XMM registers

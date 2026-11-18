@@ -1,15 +1,15 @@
 {
-  "lifter_tree": "db72f1446ae98c940f3e85db5cc1b3d88f1ba76c",
+  "lifter_tree": "163e24dd92d138ab8eeaf2130ed6a0d88498891c",
   "lifter_or_headers_modified": false,
   "headers": {
-    "runtime/cpu.h": "0e601f6c37ac49ec3b7c7f2f76327f5089e6a58795dffb9f7b2f00cc3e10fe15",
+    "runtime/cpu.h": "edaced3d1cf0dae3af04c60c9bc56d020fb059f011a28710784a8f28d7794c3f",
     "runtime/simd.h": "a1a78c5324e1c74fac9abfea0165ed54f81f84d24731e37dceeda281d96db5dc",
     "runtime/simd_fp.h": "40514d5077ba0aef3e549ca6567230e8a82126e524add794ae4e5fab5cde1fde"
   },
-  "created": "2026-11-17T22:45:21",
+  "created": "2026-11-18T01:57:50",
   "profraw": [
-    "default_16910074841717274563_0.profraw"
+    "default_16910570400499627971_0.profraw"
   ],
-  "bytes": 16211144,
-  "text_bytes": 8887148
+  "bytes": 13798136,
+  "text_bytes": 8183200
 }
