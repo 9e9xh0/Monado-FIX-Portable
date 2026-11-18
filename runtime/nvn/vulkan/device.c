@@ -341,30 +341,28 @@ static void create_device(void) {
     VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR fsr4_deriv = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, .pNext = &fsr4_mixed};
     bool fsr4_push = !legacy && has_ext(ep, ne, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-#ifdef _WIN32
-    // Windows drivers (AMD's among them) can lack both extensions. Lite never uses compute derivatives, and only its
-    // prepass uses the VALVE mixed FP16/FP32 dot: without it, the component rewrites those dots into core FP32
-    // operations (third_party/fsr4_native/portable_dot.h). So push descriptors are the only extra requirement here.
+    // Drivers can lack both extensions (Windows drivers, Intel ANV, NVIDIA). Lite never uses compute derivatives (no
+    // Lite module declares the capability), and only its prepass uses the VALVE mixed FP16/FP32 dot: without it, the
+    // component rewrites those dots into core FP32 operations (third_party/fsr4_native/portable_dot.h). So push
+    // descriptors are the only extra requirement; a driver with the VALVE feature (RADV) keeps the native shaders.
     bool fsr4_ext = fsr4_push;
-    if (fsr4_ext && has_ext(ep, ne, VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME)) {
+    // (XCDE_FSR4_PORTABLE_DOT=1: the portable path even where the VALVE feature exists, to test it on any GPU)
+    const char *fsr4_pd = getenv("XCDE_FSR4_PORTABLE_DOT");
+    if (fsr4_ext && !(fsr4_pd && *fsr4_pd == '1') && has_ext(ep, ne, VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 q = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &fsr4_mixed};
         vkGetPhysicalDeviceFeatures2(g_vk.phys, &q);
     }
     if (fsr4_ext) ext[n_ext++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
     if (fsr4_mixed.shaderMixedFloatDotProductFloat16AccFloat32)
         ext[n_ext++] = VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME;
-#else
-    bool fsr4_ext = fsr4_push && has_ext(ep, ne, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME) &&
-        has_ext(ep, ne, VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME);
-    if (fsr4_ext) {
+#ifdef __linux__
+    // (Linux enabled compute derivatives before the portable path existed; keep that device unchanged where available.)
+    if (fsr4_ext && has_ext(ep, ne, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 q = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &fsr4_deriv};
+        fsr4_deriv.pNext = NULL;
         vkGetPhysicalDeviceFeatures2(g_vk.phys, &q);
-        fsr4_ext = fsr4_deriv.computeDerivativeGroupQuads && fsr4_mixed.shaderMixedFloatDotProductFloat16AccFloat32;
-    }
-    if (fsr4_ext) {
-        ext[n_ext++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
-        ext[n_ext++] = VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME;
-        ext[n_ext++] = VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME;
+        fsr4_deriv.pNext = &fsr4_mixed;
+        if (fsr4_deriv.computeDerivativeGroupQuads) ext[n_ext++] = VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME;
     }
 #endif
 #endif
@@ -520,19 +518,15 @@ static void create_device(void) {
         extern bool fsr4_device_ok;
         fsr4_device_ok = fsr4_ext && b->shaderInt16 && f12.shaderInt8 && f12.shaderFloat16 &&
             f11.storageBuffer16BitAccess && f12.storageBuffer8BitAccess && f13.shaderIntegerDotProduct;
-#ifdef _WIN32
+        // (each structure only when its extension was enabled above)
         if (fsr4_mixed.shaderMixedFloatDotProductFloat16AccFloat32) { fsr4_mixed.pNext = f.pNext; f.pNext = &fsr4_mixed; }
-        (void)fsr4_deriv;
+        if (fsr4_ext && fsr4_deriv.computeDerivativeGroupQuads) { fsr4_deriv.pNext = f.pNext; f.pNext = &fsr4_deriv; }
         // (each requirement separately: a bare "unavailable" said nothing about which one a driver lacks)
         LOG("[fsr4] Lite INT8 device features: %s (push-descriptor %d, int16 %d, int8 %d, float16 %d, storage16 %d, "
             "storage8 %d, integer-dot %d; prepass: %s)\n", fsr4_device_ok ? "supported" : "unavailable", (int)fsr4_push,
             (int)b->shaderInt16, (int)f12.shaderInt8, (int)f12.shaderFloat16, (int)f11.storageBuffer16BitAccess,
             (int)f12.storageBuffer8BitAccess, (int)f13.shaderIntegerDotProduct,
             fsr4_mixed.shaderMixedFloatDotProductFloat16AccFloat32 ? "native mixed FP16/FP32 dot" : "portable FP32 dot");
-#else
-        if (fsr4_ext) { fsr4_mixed.pNext = f.pNext; f.pNext = &fsr4_deriv; }
-        LOG("[fsr4] Lite INT8 device features: %s\n", fsr4_device_ok ? "supported" : "unavailable");
-#endif
     }
 #endif
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");

@@ -51,8 +51,9 @@ upscaler is just unavailable (`XCDE_NATIVE_FSR=0` skips both).
 - **AMD FSR 4 Lite INT8** (`build/linux/libmonado_fsr4.so`, `scripts/build_fsr4_linux.sh`): a native Vulkan
   implementation of FSR 4.1.2's Lite graph (GPL-2.0-or-later, `third_party/fsr4_native/`, ADR 0012). It needs the
   Lite model assets, prepared once with `tools/prepare_fsr4_lite.py` from AMD's public SDK 2.4.0 (into
-  `build/fsr4/assets`, linked as `build/linux/fsr4`), or `MONADO_FSR4_ASSET_DIR`. GPU: push descriptors, compute
-  derivatives, VALVE mixed float dot, int8/int16/fp16 and integer dot product (Vulkan 1.3); 4K output at most.
+  `build/fsr4/assets`, linked as `build/linux/fsr4`), or `MONADO_FSR4_ASSET_DIR`. GPU: push descriptors, int8/int16/fp16
+  and integer dot product (Vulkan 1.3); 4K output at most. Without VALVE mixed float dot (Intel ANV, NVIDIA) the
+  prepass dots are rewritten to FP32 (`portable_dot.h`); RADV keeps the native shaders.
 
 Both take linear colour (the prep pass decodes sRGB and the result is encoded again before the HUD) and are fed
 the Halton jitter (`XCDE_TMP_NOJITTER=1` turns it off). `MONADO_FSR3_LIBRARY` / `MONADO_FSR4_LIBRARY` override the

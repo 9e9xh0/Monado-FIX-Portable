@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Expand the Lite prepass's half-input/float-accumulator dot on Windows.
+// Expand the Lite prepass's half-input/float-accumulator dot when the driver lacks VK_VALVE_shader_mixed_float_dot_product.
 // Keep the captured assets intact; only the in-memory shader module changes.
 #pragma once
 #include <cstdint>
