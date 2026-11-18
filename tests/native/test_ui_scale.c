@@ -10,14 +10,14 @@ static UiScaleFrame f;  // (large: not on the stack)
 
 static bool near_(float a, float b) { return fabsf(a - b) < 0.01f; }
 
-// one frame of boxes through the frame grouping; returns the anchors of the last frame's run
+static bool sc[32];  // (the last frame's run: each box scaled?)
+
+// one frame of boxes through the frame grouping; the anchors (and sc) of its run
 static void frame(const float (*b)[4], int n, float *ax, float *ay) {
     ui_scale_frame_begin(&f, W, H);
-    for (int i = 0; i < n; i++) {
-        bool ok = ui_scale_frame_anchor(&f, b[i], W, H, &ax[i], &ay[i]);
-        assert(ok);
-    }
+    for (int i = 0; i < n; i++) sc[i] = ui_scale_frame_anchor(&f, b[i], W, H, &ax[i], &ay[i]);
 }
+static bool all_(int i0, int n, bool v) { for (int i = i0; i < n; i++) if (sc[i] != v) return false; return true; }
 
 int main(void) {
     float ax, ay, box[4];
@@ -57,7 +57,9 @@ int main(void) {
     const int nf = (int)(sizeof field / sizeof field[0]);
     float fx[16], fy[16];
     frame(field, nf, fx, fy);  // (first frame: in-order chaining)
-    frame(field, nf, fx, fy);  // (second: the first frame's groups)
+    frame(field, nf, fx, fy);  // (second: they are seen again)
+    frame(field, nf, fx, fy);  // (third: still - the groups of the still elements)
+    assert(all_(0, nf, true));
     for (int i = 0; i < 8; i++) assert(fx[i] == W && fy[i] == 0);
     assert(fx[8] == W && fy[8] == H && fx[9] == W && fy[9] == H);
 
@@ -66,21 +68,106 @@ int main(void) {
                               {0, 250, 162, 296}, {4, 255, 158, 291}, {118, 333, 146, 361}, {14, 335, 24, 348},
                               {-2, 366, 159, 412}, {1, 371, 156, 407}};
     float px[10], py[10];
-    frame(party, 10, px, py);
-    frame(party, 10, px, py);
+    for (int k = 0; k < 3; k++) frame(party, 10, px, py);
+    assert(all_(0, 10, true));
     for (int i = 0; i < 10; i++) assert(px[i] == 0 && py[i] == py[0]);
 
     // the arts palette with the strip behind the help line and the left gauge: centred, at the bottom
     const float bottom[][4] = {{-1, 640, 639, 720}, {0, 610, 196, 720}, {584, 546, 696, 658}, {523, 680, 946, 710}};
     float bx[4], by[4];
-    frame(bottom, 4, bx, by);
-    frame(bottom, 4, bx, by);
+    for (int k = 0; k < 3; k++) frame(bottom, 4, bx, by);
+    assert(all_(0, 4, true));
     for (int i = 0; i < 4; i++) assert(bx[i] == W / 2 && by[i] == H);
 
-    // an element that just appeared (no box last frame) chains in draw order
+    // the battle's top banner: its strips slide in every frame; the banner's anchor must not follow them
+    float banner[][4] = {{498, 1, 782, 91}, {504, 13, 776, 79}, {616, 10, 664, 18}, {420, 44, 788, 64}, {598, 64, 966, 84}};
+    float tx[5], ty[5], t0x = 0;
+    for (int k = 0; k < 20; k++) {
+        banner[3][0] += 7; banner[3][2] += 7; banner[4][0] -= 11; banner[4][2] -= 11;  // (the strips)
+        frame(banner, 5, tx, ty);
+        if (k == 3) t0x = tx[0];
+        if (k > 3) for (int i = 0; i < 3; i++) assert(sc[i] && tx[i] == t0x && ty[i] == 0);
+    }
+    assert(t0x == W / 2);  // (the banner crosses the middle of the frame)
+
+    // the target reticle: four pieces moving with the camera (and stopping) keep the game's size - they stay on the
+    // enemy - and never join the HUD at the top (which is scaled)
+    float ret[][4] = {{1, 1, 782, 91}, {544, 218, 624, 266}, {544, 120, 624, 168}, {509, 151, 557, 231}, {610, 151, 658, 231}};
+    float rx[5], ry[5];
+    for (int k = 0; k < 30; k++) {
+        float d = k < 10 ? 3 : 0;  // (the camera stops after 10 frames)
+        for (int i = 1; i < 5; i++) { ret[i][0] += d; ret[i][2] += d; }
+        frame(ret, 5, rx, ry);
+        if (k > 2) assert(sc[0] && all_(1, 5, false));
+    }
+    // ...and with the camera at rest from the start, the reticle 22 px under the enemy's bar
+    const float rest[][4] = {{498, 1, 782, 91}, {561, 113, 606, 158}, {544, 195, 624, 243}, {509, 151, 557, 231}, {610, 151, 658, 231}};
+    for (int k = 0; k < 20; k++) frame(rest, 5, rx, ry);
+    assert(sc[0] && all_(1, 5, false));
+
+    // a speech bubble and its text, a dialogue box, a popup window, the area banner: away from the edges, as drawn
+    float bub[][4] = {{600, 200, 700, 240}, {615, 210, 685, 230}};
+    float ux[2], uy[2];
+    for (int k = 0; k < 10; k++) {
+        for (int i = 0; i < 2; i++) { bub[i][0] -= 2; bub[i][2] -= 2; bub[i][1] += 1; bub[i][3] += 1; }
+        frame(bub, 2, ux, uy);
+        if (k > 1) assert(all_(0, 2, false));
+    }
+    const float popup[][4] = {{360, 175, 732, 380}, {450, 185, 645, 207}, {480, 240, 800, 310}, {515, 395, 765, 416}};
+    float ox_[4], oy_[4];
+    for (int k = 0; k < 4; k++) { frame(popup, 4, ox_, oy_); assert(all_(0, 4, false)); }
+    // a window that crosses the middle and covers half the height (the party menu) is not scaled even at the top edge
+    const float window[][4] = {{427, 27, 707, 418}, {527, 160, 753, 236}, {545, 559, 735, 580}};
+    for (int k = 0; k < 4; k++) { frame(window, 3, ox_, oy_); assert(all_(0, 3, false)); }
+
+    // a palette slot shaking for a frame as its art fires stays with the palette
+    float pal[][4] = {{-1, 640, 639, 720}, {0, 610, 196, 720}, {584, 546, 696, 658}, {523, 680, 946, 710}, {820, 578, 876, 634},
+                      {404, 578, 460, 634}, {468, 578, 524, 634}, {532, 578, 588, 634}, {692, 578, 748, 634}, {756, 578, 812, 634}};
+    float qx[10], qy[10];
+    for (int k = 0; k < 20; k++) {
+        float d = k == 8 ? -2.5f : k == 9 ? 2.5f : 0;
+        pal[4][0] += d; pal[4][2] += d;
+        frame(pal, 10, qx, qy);
+        if (k > 3) for (int i = 2; i < 10; i++) assert(sc[i] && qx[i] == W / 2 && qy[i] == H);
+    }
+
+    // a hint icon sliding in by the right edge stays with its text (the edge band is the HUD's)
+    float hint[][4] = {{1095, 257, 1225, 285}, {1180, 252, 1216, 288}};
+    float hx[2], hy[2];
+    for (int k = 0; k < 6; k++) { hint[1][0] += 7; hint[1][2] += 7; frame(hint, 2, hx, hy); }
+    assert(all_(0, 2, true) && hx[1] == W && hx[0] == W && hy[1] == 0 && hy[0] == 0);
+    // ...and the hints keep the top corner when the minimap's group lets them go
+    const float hints[][4] = {{1095, 257, 1225, 285}, {1157, 233, 1225, 261}};
+    for (int k = 0; k < 3; k++) frame(hints, 2, hx, hy);
+    assert(hx[0] == W && hy[0] == 0 && hx[1] == W && hy[1] == 0);
+
+    // hint text missing for a frame, with a marker (not scaled) over it, comes back with the HUD's corner
+    const float h2[][4] = {{1157, 233, 1225, 261}, {1095, 257, 1225, 285}, {1031, 198, 1102, 270}};
+    float gx[3], gy[3];
+    float mv[][4] = {{1157, 233, 1225, 261}, {1031, 198, 1102, 270}};
+    for (int k = 0; k < 10; k++) { frame(h2, 3, gx, gy); }
+    for (int k = 0; k < 4; k++) { mv[1][0] += 3; mv[1][2] += 3; frame(mv, 2, gx, gy); }  // (the marker moves; the text is out)
+    frame(h2, 2, gx, gy);
+    assert(sc[0] && sc[1] && gx[1] == W && gy[1] == 0);
+
+    // an element that joins a group for a frame or two keeps its size and anchor; after a while it follows the group
+    const float lonely[][4] = {{600, 400, 680, 440}}, joined[][4] = {{600, 400, 680, 440}, {640, 440, 1270, 470}};
+    float lx[2], ly[2];
+    for (int k = 0; k < UI_SCALE_SETTLE + 4; k++) frame(lonely, 1, lx, ly);  // (established: away from the edges)
+    assert(!sc[0]);
+    for (int k = 0; k < 3; k++) { frame(joined, 2, lx, ly); assert(!sc[0]); }
+    for (int k = 0; k < UI_SCALE_SETTLE + 2; k++) frame(joined, 2, lx, ly);  // (...until the new group has held)
+    assert(sc[0] && sc[1] && lx[0] == W / 2 && lx[1] == W / 2);
+
+    // an element that just appeared (no box last frame): chained in draw order; away from the edges it is as drawn
     frame(bottom, 0, bx, by);
-    float lone[4] = {600, 300, 680, 340};
-    assert(ui_scale_frame_anchor(&f, lone, W, H, &ax, &ay) && near_(ax, 640) && near_(ay, 320));
+    float lone[4] = {600, 300, 680, 340}, edge[4] = {1200, 300, 1270, 340};
+    assert(!ui_scale_frame_anchor(&f, lone, W, H, &ax, &ay));
+    assert(ui_scale_frame_anchor(&f, edge, W, H, &ax, &ay) && ax == W);
+
+    // a box of no size (a speech bubble panel whose shape is not in its vertex positions) is left as drawn
+    float point[4] = {461, 183, 461, 183};
+    for (int k = 0; k < 3; k++) { frame(hints, 2, hx, hy); assert(!ui_scale_frame_anchor(&f, point, W, H, &ax, &ay)); }
 
     // the fold: X = gx * sx + ox, scaled by s around (ax, ay); the anchor stays put
     float sx = 1.5f, sy = 1.5f, ox = 0, oy = 0;

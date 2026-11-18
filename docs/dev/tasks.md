@@ -1518,3 +1518,28 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   al 100 % la captura de `load_walk` (frame 3000) es idéntica píxel a píxel a la de `main`.
   Límites conocidos: la retícula de objetivo se une al grupo de la barra del enemigo (16 px entre cajas) y sube un poco;
   los indicadores "Warning" de las esquinas inferiores se acercan al centro con la paleta; diálogos con NPC sin probar.
+- [x] T271b **#121, seguimiento (2026-11-18): el HUD reducido temblaba, se rompían popups y menús, y el aviso
+  "Location" mostraba un trozo de escena.** Medido con `XCDE_UI_SCALE_TRACE=<frame>[,<n>]` (anclas de n frames, sin
+  volcados): en 600 frames de combate, 1149 cambios de ancla en cajas quietas - la composición de los grupos cambiaba
+  cada frame (franjas que se deslizan, la retícula y los números que se mueven con la cámara). Las pruebas del usuario
+  (popups, menú de grupo, diálogo, rótulo de zona, burbujas de NPC) mostraron que escalar pieza a pieza lo que está
+  lejos de los bordes no se sostiene. Ahora:
+  - Solo se escala el HUD de los bordes: un grupo que toca la franja del 10 % (minimapa, pistas, lista del grupo,
+    barra del enemigo, paleta, "Story", aviso "Location"). Popups, menús (un grupo que cruza el centro y ocupa media
+    altura o más), diálogos, el rótulo de zona, burbujas, la retícula y los números quedan como los dibuja el juego.
+  - Un elemento lejos de los bordes que sigue moviéndose sin cambiar de tamaño (3 de 6 frames, no a la vez que el HUD
+    de al lado) es un marcador del mundo: nunca se escala ni se une a los grupos del HUD (salvo dentro de un elemento
+    del HUD). Margen 47 px solo entre piezas de la franja del borde, 12 px si no.
+  - Un elemento cambia un ancla (o si se escala) establecida solo tras 12 frames de desacuerdo de su grupo; en un borde
+    lateral va a la esquina (las pistas saltaban 85 px con el nombre de zona); sobre el centro y arriba/abajo se centra.
+  - Un elemento continúa al del frame anterior solo si lo solapa en al menos la mitad: el texto de las pistas, ausente
+    un frame, tomaba el estado de un marcador que apenas tocaba.
+  - El aviso "Location" pinta su panel en una textura propia leyendo la ventana en su sitio a tamaño completo; esos
+    draws (y los del HUD que leen la ventana bajo sí) leen una copia desplazada igual que el elemento
+    (`ui_backdrop_view`; `XCDE_UI_SCALE_NO_BACKDROP=1` lo desactiva).
+  Resultado a 0.7: campo sin cambios de ancla; combate estable salvo el reajuste al empezar; la retícula sobre el
+  enemigo; popup sin el trozo de escena. Límites: un rótulo ancho que tapa la retícula la arrastra con la barra
+  superior mientras está (y vuelve 12 frames después).
+  - El panel de las burbujas de NPC (shader `e3e86ad310e794ea`) no tiene su forma en las posiciones de vértice: su caja
+    salía como un punto y heredaba el ancla de la esquina mientras su texto quedaba igual. Una caja sin tamaño no se
+    escala (comprobado con un guardado del usuario en el Distrito Comercial).
