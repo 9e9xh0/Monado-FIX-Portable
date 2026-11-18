@@ -1811,8 +1811,8 @@ static void tab_graphics() {
                                 "Automático: solo se activa en RDNA 3. Desactivado si te baja el rendimiento."));
     }
     {   // [XCDE] issue #25: long-session corruption. Conservative mode: no async render worker.
-        static const char *ss_ui[] = {"Automático (activado)", "Desactivado", "Activado"};
-        static const char *ss_en[] = {"Automatic (on)", "Off", "On"};
+        static const char *ss_ui[] = {"Automático (desactivado)", "Desactivado", "Activado"};
+        static const char *ss_en[] = {"Automatic (off)", "Off", "On"};
         int ss = g.session_fix == 0 ? 1 : g.session_fix == 1 ? 2 : 0;
         if (monado_combo(g.ui_lang ? "Long-session compatibility (restart)" : "Compatibilidad de sesión larga (al reiniciar)",
                          &ss, g.ui_lang ? ss_en : ss_ui, 3))
