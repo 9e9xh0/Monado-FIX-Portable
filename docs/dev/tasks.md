@@ -1486,19 +1486,23 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   rechazado, modo estricto rechaza) y `tools/extract/check_dump.py targets` sigue OK con el dump de referencia.
   Hecho cuando: un dump de otra región con build-ids 2.0.0 compila y arranca (pendiente de confirmación del reportero).
 
-## Velocidad al correr — 2026-11-17 (T270)
+## Velocidad al correr — 2026-11-17, corregido 2026-11-18 (T270)
 
 - [x] T270 **GitHub #100: modificador de velocidad al correr (x1.5 / x2).** xc2-recomp no lo tiene (sólo una tecla de
   caminar que baja el stick del teclado y cheats genéricos); Monado-II tiene la ranura Quick Step extra, pero usa el
-  tope normal del juego (~+25 %) y no sirve para x1.5/x2. Implementado en el port: `run_speed` en `xcde.ini`
-  (`1.00`, `1.50`, `2.00`), combo en la pestaña Trucos del launcher y del menú F1. `runtime/hle/party.c`
-  (`run_speed_tick`) toma la posición del líder (el mismo escáner del mod de party), añade el delta horizontal extra a
-  la entidad (+0x110) y a la posición del componente de movimiento (objeto de personaje +0x1a38, +0x50/+0x78/+0xa0),
-  para que el juego siga resolviendo suelo/colisiones desde el estado modificado; no toca la Y (saltos/caídas) ni se
-  aplica en menús, escenas o teletransportes (>2 uds/frame). `XCDE_RUN_SCALE` queda como override de tests.
-  Pruebas: `test_settings_roundtrip.c` (1.5 de entrada, 2.0 tras guardar/cargar), build Linux completo; el
-  mantenedor confirma en juego que el personaje corre rápido con x2. Animaciones a ritmo original (puede haber algo
-  de deslizamiento de pies).
+  tope normal del juego (~+25 %) y no sirve para x1.5/x2. `run_speed` en `xcde.ini` (`1.00`, `1.50`, `2.00`), combo en
+  la pestaña Trucos del launcher y del menú F1; `XCDE_RUN_SCALE` queda como override de tests.
+  La primera versión (`run_speed_tick`) sumaba el delta horizontal a la posición del líder; funcionaba en el campo,
+  pero tras una escena de historia el juego reescribe esa posición desde su estado de física y la velocidad dejaba de
+  aplicarse. Ahora se parchea el propio cálculo del juego (`f_70004463b0`, `fmul s0, s8, s0` en `0x7000446520`): el
+  cheat de la comunidad para 2.0.0 (`[Speed mod x2]`, BID `7E1DF8E08D60544B`) sustituye ese producto por 2.0 fijo;
+  aquí `runtime/hle/party.c` (`xcde_run_speed_mul`) conserva la tasa que calcula el juego y la multiplica por el ajuste.
+  Así el juego se mueve más rápido con sus propias colisiones, suelo, batallas y escenas; no se tocan las posiciones ni
+  la Y (los saltos no se aceleran, como corresponde a una tasa horizontal). Se elimina `run_speed_tick` y el escáner
+  ya no arranca sólo por esta opción.
+  Pruebas: build Windows; el ajuste no cambia (`test_settings_roundtrip.c` cubre 1.5 de entrada y 2.0 tras
+  guardar/cargar); el mantenedor confirma en juego el prólogo y el estado posterior a la escena con x2 (antes fallaba
+  después de la escena).
 
 ## Tamaño del HUD — 2026-11-17 (T271)
 

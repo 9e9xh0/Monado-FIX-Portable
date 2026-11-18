@@ -282,3 +282,17 @@ PATCHES[0x70006b1b00] = Patch(0xf81e0ff3, _graphics_construct, 'T-GRAPHICS-SCALA
                            'forget prior overlays on native configuration construction')
 PATCHES[0x70006b24d0] = Patch(0xd65f03c0, _graphics_destroy, 'T-GRAPHICS-SCALABILITY',
                            'forget prior overlays on native configuration destruction')
+
+
+# T270 (GitHub #100): the game's max-horizontal-velocity rate. f_70004463b0 multiplies the rate it selected from the
+# character state (s8: 1.0 normally, 0.5 or a movement value in other states) by the movement speed at +0x11c and
+# stores the product. The XCDE 2.0.0 community cheat for this build (BID 7E1DF8E08D60544B, GBAtemp) replaces this
+# multiply with a fixed 2.0 for "Speed mod x2"; scaling the product instead keeps the game's own state-dependent rate
+# and lets the game move itself (collisions, ground, battles and scenes all keep working). runtime/hle/party.c.
+def _run_speed(gen, addr):
+    return ('{ extern uint32_t xcde_run_speed_mul(uint32_t, uint32_t); '
+            'c->v[0] = xcde_run_speed_mul((uint32_t)c->v[8], (uint32_t)c->v[0]); }')
+
+
+PATCHES[0x7000446520] = Patch(0x1e200900, _run_speed, 'T270',
+                              'fmul s0, s8, s0 - scale max horizontal velocity rate')
