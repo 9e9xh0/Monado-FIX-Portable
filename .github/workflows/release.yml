@@ -73,8 +73,28 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Package version: $version"
 
+  pgo:
+    # The committed profile (data/pgo/monado.proftext.gz, docs/PGO.md) is LLVM's text format. A compiler reads only an
+    # indexed profile from its own LLVM version or an older one, so convert it once with the oldest compiler that
+    # reads it: clang-19 (the Linux runtime). zig 0.17.1's clang 22 (the Windows runtime and every player's game code
+    # build) reads that too.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Index the profile with LLVM 19
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm-19
+          python3 tools/pgo.py check
+          python3 tools/pgo.py index --tool llvm-profdata-19 --out build/pgo/monado.profdata
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pgo-profile
+          path: build/pgo/monado.profdata
+          if-no-files-found: error
+
   linux:
-    needs: version
+    needs: [version, pgo]
     runs-on: ubuntu-24.04   # (glibc 2.39: the AppImage then runs on current and older distributions alike)
     timeout-minutes: 60
     steps:
@@ -118,8 +138,12 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -q "ziglang==$ZIG_VERSION" capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5 pyinstaller
+      - uses: actions/download-artifact@v4
+        with:
+          name: pgo-profile
+          path: build/pgo
       - name: Stage the first-start builder
-        run: .venv/bin/python tools/gamebuild_stage.py --dest build/gamebuild --platform linux
+        run: .venv/bin/python tools/gamebuild_stage.py --dest build/gamebuild --platform linux --pgo build/pgo/monado.profdata
       - name: Build the release runtime, launcher and upscaler components
         env:
           VMA_INCLUDE_DIR: ${{ github.workspace }}/build/deps
@@ -128,7 +152,7 @@ jobs:
           CXX: clang++-19
         run: |
           # clang 19+: runtime/platform/linux.c checks __builtin_cpu_supports("cx16")
-          cmake --preset linux -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19
+          cmake --preset linux -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 -DMONADO_PGO=build/pgo/monado.profdata
           cmake --build build/cmake/release
           test -f build/linux/libmonado_fsr3.so || { echo "::error::native FSR 3 was not built"; exit 1; }
           test -f build/linux/libmonado_fsr4.so || { echo "::error::native FSR 4 Lite was not built"; exit 1; }
@@ -182,7 +206,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    needs: version
+    needs: [version, pgo]
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -270,6 +294,10 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw 'amd_fidelityfx_vk.dll is not validly signed' }
           Remove-Item ffx.zip
           .venv\Scripts\python tools/install_dlss.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: pgo-profile
+          path: build/pgo
       - name: Restore zig's C runtime for the game code library
         id: prelink-cache
         uses: actions/cache/restore@v4
@@ -279,7 +307,7 @@ jobs:
       - name: Stage the first-start builder (with the executable's import library)
         env:
           MONADO_PRELINK_CACHE: ${{ runner.temp }}\zig-prelink
-        run: .venv\Scripts\python tools/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a
+        run: .venv\Scripts\python tools/gamebuild_stage.py --dest build/gamebuild --platform windows --link-file xcde_imports.a --pgo build/pgo/monado.profdata
       - name: Save zig's C runtime for the game code library
         if: steps.prelink-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -289,7 +317,7 @@ jobs:
       - name: Build the release runtime, launcher and FSR 4 Lite component
         run: |
           $env:PATH = "$PWD\.venv\Scripts;C:\msys64\ucrt64\bin;$env:PATH"
-          cmake --preset windows -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}"
+          cmake --preset windows -B build/cmake/release -DMONADO_RELEASE=ON "-DMONADO_VERSION=${{ needs.version.outputs.version }}" "-DMONADO_PGO=build/pgo/monado.profdata"
           cmake --build build/cmake/release
           foreach ($f in 'build/xcde.exe', 'build/xcde_launcher.exe', 'build/monado_fsr4.dll', 'build/gamebuild/xcde_imports.a') {
             if (-not (Test-Path $f)) { throw "missing $f" }

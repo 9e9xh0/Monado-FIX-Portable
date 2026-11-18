@@ -112,8 +112,9 @@ def find_zig():
     raise SystemExit('gamebuild: zig not found. Install it (pip install ziglang) or set XCDE_ZIG=<path>.')
 
 
-def stage(dest, platform, zig=None, link_files=()):
-    """Write the staged resources; returns the folder. `zig` defaults to the ziglang package."""
+def stage(dest, platform, zig=None, link_files=(), pgo=None):
+    """Write the staged resources; returns the folder. `zig` defaults to the ziglang package. `pgo`: an indexed
+    .profdata the bundled zig can read (tools/pgo.py index with an LLVM no newer than zig's), or None."""
     dest = Path(dest)
     if dest.exists():
         shutil.rmtree(dest)
@@ -163,6 +164,10 @@ def stage(dest, platform, zig=None, link_files=()):
         # executable is linked, after this staging step, so only the packager checks it.
         'link_files': list(link_files),
     }
+    if pgo:
+        (dest / 'pgo').mkdir()
+        shutil.copy2(pgo, dest / 'pgo' / 'monado.profdata')
+        link['pgo'] = 'pgo/monado.profdata'
     if platform == 'windows':
         link['lld'] = prelink(dest, platform)
     (dest / 'link.json').write_text(json.dumps(link, indent=2) + '\n', encoding='utf-8')
@@ -176,8 +181,9 @@ def main(argv=None):
     parser.add_argument('--zig', help='zig binary to bundle (default: the ziglang package)')
     parser.add_argument('--link-file', action='append', default=[],
                         help='extra link input produced later (Windows: xcde_imports.a)')
+    parser.add_argument('--pgo', help='indexed .profdata to compile the game code with (tools/pgo.py index; docs/PGO.md)')
     args = parser.parse_args(argv)
-    dest = stage(args.dest, args.platform, args.zig, args.link_file)
+    dest = stage(args.dest, args.platform, args.zig, args.link_file, args.pgo)
     print(f'gamebuild resources: {dest} (GAMELIB_ID {game_id.fingerprint()})')
     return 0
 

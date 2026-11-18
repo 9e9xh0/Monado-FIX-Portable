@@ -29,6 +29,43 @@ else()
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+# Optimisation level of the generated game code and the C runtime, and the profile-guided build (docs/PGO.md, after
+# TotK Recomp's docs/pgo.md). MONADO_PGO=gen instruments both: the game adds its counts to build/pgo/raw/*.profraw
+# every minute and at exit; tools/pgo.py merge turns them into a .profdata. MONADO_PGO=<file.profdata> compiles with it.
+set(MONADO_OPT "O1" CACHE STRING "Optimisation level of the game code and the C runtime: O1 or O2 (a PGO build uses O2)")
+set(MONADO_PGO "" CACHE STRING "Profile-guided build: empty (off), gen (instrumented build), or a .profdata file")
+set(PGO_FLAGS)
+set(PGO_LINK)
+set(PGO_DEPENDS)
+# a static function's profile name carries its source path unless told otherwise: the first-start builder compiles in
+# another folder than the training build
+set(PGO_NAMES -mllvm -static-func-full-module-prefix=false)
+if(MONADO_PGO STREQUAL "gen")
+  set(PGO_FLAGS "-fprofile-generate=${ROOT}/build/pgo/raw" ${PGO_NAMES} -DMONADO_PGO_GEN)
+  set(PGO_LINK -fprofile-generate)
+elseif(MONADO_PGO)
+  get_filename_component(MONADO_PGO_FILE "${MONADO_PGO}" ABSOLUTE BASE_DIR "${ROOT}")
+  if(NOT EXISTS "${MONADO_PGO_FILE}")
+    message(FATAL_ERROR "MONADO_PGO=${MONADO_PGO}: no such profile")
+  endif()
+  # unprofiled / out-of-date: code the training never ran, or that changed since; it compiles without a profile
+  # MONADO_PGO_ID: the profile's digest on the command line. zig's compiler cache keys on the arguments and the
+  # included files, not on the profile's contents, and would hand back objects built with an older profile.
+  file(SHA256 "${MONADO_PGO_FILE}" _pgo_sha)
+  string(SUBSTRING "${_pgo_sha}" 0 16 _pgo_id)
+  set(PGO_FLAGS "-fprofile-use=${MONADO_PGO_FILE}" -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date
+      -Wno-backend-plugin ${PGO_NAMES} -DMONADO_PGO_ID=${_pgo_id})
+  set(PGO_DEPENDS "${MONADO_PGO_FILE}")
+endif()
+if(MONADO_PGO AND MONADO_OPT STREQUAL "O1")
+  set(MONADO_OPT O2)  # the profile's inlining and hot/cold layout work at -O2
+endif()
+if(NOT MONADO_OPT MATCHES "^O[0-3]$")
+  message(FATAL_ERROR "MONADO_OPT=${MONADO_OPT}: use O1 or O2")
+endif()
+message(STATUS "game code and runtime: -${MONADO_OPT}, PGO: ${MONADO_PGO}")
+set(OPT -${MONADO_OPT} ${PGO_FLAGS})
+
 # ---- unit lists: the one place a new runtime file is added ----
 set(RT_UNITS loader dispatch kernel ipc fnprof services/fs services/romfs_virtual services/am services/acc services/time
     services/hid_set services/kbicons services/misc services/audio services/hwopus hle/heaps hle/pl hle/vi hle/nvn_boot
@@ -90,11 +127,11 @@ if(WIN32)
   set(MSYS2_PREFIX "C:/msys64/ucrt64" CACHE PATH "MSYS2 UCRT64 prefix with SDL3, Vulkan, shaderc, FFmpeg, Opus, zlib")
   set(OUT "${ROOT}/build")
   # scripts/build_rt_gfx.sh CF, and the C++ flags of its ImGui / DLSS / VMA units
-  set(RT_C_FLAGS -O1 ${MARCH} -fno-strict-aliasing -fvisibility=hidden -w)
+  set(RT_C_FLAGS ${OPT} ${MARCH} -fno-strict-aliasing -fvisibility=hidden -w)
   set(RT_C_INCLUDES runtime runtime/nvn third_party "${MSYS2_PREFIX}/include")
   set(CXX_FLAGS -std=c++17 -O1 ${MARCH} -fvisibility=hidden -w "SHELL:-idirafter \"${MSYS2_PREFIX}/include\"")
   # scripts/build_boot.sh CF (the game code)
-  set(GAME_C_FLAGS -O1 ${MARCH} -ffp-contract=off -fno-strict-aliasing -fvisibility=hidden -w)
+  set(GAME_C_FLAGS ${OPT} ${MARCH} -ffp-contract=off -fno-strict-aliasing -fvisibility=hidden -w)
 
   add_library(monado_rt OBJECT ${RT_SOURCES})
   target_compile_options(monado_rt PRIVATE ${RT_C_FLAGS})
@@ -167,7 +204,7 @@ else()
   pkg_check_modules(LAUNCHER_DEPS REQUIRED IMPORTED_TARGET sdl3 vulkan)
   set(VMA_INCLUDE_DIR "$ENV{VMA_INCLUDE_DIR}" CACHE PATH "Directory with vk_mem_alloc.h, if it is not installed system-wide")
   # scripts/build_linux.sh flags (runtime and game code alike)
-  set(LINUX_FLAGS -O1 ${MARCH} -ffp-contract=off -fno-strict-aliasing -D_GNU_SOURCE -w)
+  set(LINUX_FLAGS ${OPT} ${MARCH} -ffp-contract=off -fno-strict-aliasing -D_GNU_SOURCE -w)
   if(NOT MONADO_RELEASE)  # a release runtime keeps default visibility: the game library resolves its symbols (-rdynamic)
     list(APPEND LINUX_FLAGS -fvisibility=hidden)
   endif()
@@ -216,6 +253,12 @@ else()
   endif()
 endif()
 
+# A/B builds (docs/PGO.md): put this configuration's executables in another folder than the default one
+set(MONADO_OUT_DIR "" CACHE PATH "Folder for the game executable and launcher (default: build/ or build/linux/)")
+if(MONADO_OUT_DIR)
+  set(OUT "${MONADO_OUT_DIR}")
+endif()
+
 if(MONADO_RUNTIME_ONLY)
   return()
 endif()
@@ -240,6 +283,10 @@ set_target_properties(monado_game_exe PROPERTIES OUTPUT_NAME ${GAME_NAME} LINKER
                       RUNTIME_OUTPUT_DIRECTORY "${OUT}")
 target_link_libraries(monado_game_exe PRIVATE ${GAME_LINK_LIBS})
 target_link_options(monado_game_exe PRIVATE ${GAME_LINK_OPTIONS})
+target_link_options(monado_game_exe PRIVATE ${PGO_LINK})  # (gen: links the profile runtime)
+if(PGO_DEPENDS)  # a new profile recompiles everything it applies to
+  set_property(SOURCE ${RT_SOURCES} ${GAME_SOURCES} APPEND PROPERTY OBJECT_DEPENDS "${PGO_DEPENDS}")
+endif()
 if(WIN32 AND MONADO_RELEASE)
   # zig's linker writes no import library: make one from xcde.exe's export table (tools/pe_implib.py)
   add_custom_command(TARGET monado_game_exe POST_BUILD

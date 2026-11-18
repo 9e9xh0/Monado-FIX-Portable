@@ -60,7 +60,8 @@ def main():
                        XCDE_SHOTS=f'{args.frames}:{output / (name + ".png")}', XCDE_NATIVE_INTERVALS=str(output / (name + '.csv')))
             if args.present:
                 env['XCDE_PRESENT_ALWAYS'] = '1'
-            env['PATH'] = str(root/'build/runtime-deps') + ';' + str(root/'build') + ';C:/msys64/ucrt64/bin;' + env['PATH']
+            extra = [str(root/'build/runtime-deps'), str(root/'build')] + (['C:/msys64/ucrt64/bin'] if os.name == 'nt' else [])
+            env['PATH'] = os.pathsep.join(extra + [env['PATH']])
             print('Running', name, flush=True)
             with (output/(name+'.log')).open('w', encoding='utf-8') as log:
                 process = subprocess.Popen([str(exe), str(args.targets.resolve())], cwd=root, env=env, stdout=log,
