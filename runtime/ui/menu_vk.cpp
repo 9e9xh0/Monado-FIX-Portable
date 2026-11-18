@@ -215,7 +215,7 @@ static const char *const k_en[][2] = {
     {"Compatibilidad de sesión larga (al reiniciar)", "Long-session compatibility (after a restart)"},
     {"Automático (AMD integrada: apagada)", "Automatic (AMD integrated: off)"},
     {"Automático (RDNA 3: activado)", "Automatic (RDNA 3: on)"},
-    {"Automático (activado)", "Automatic (on)"},
+    {"Automático (desactivado)", "Automatic (off)"},
     {"Desactivada", "Off"}, {"Desactivado", "Off"}, {"Activada", "On"}, {"Activado", "On"},
 };
 static const char *T(const char *es) {
@@ -446,7 +446,7 @@ static void ui(void) {
             if (monado_combo(T("Fix de parpadeo AMD (al reiniciar)"), &amdfix, TL(amd_modes, 3).p, 3))
                 g_settings.amd_fix = amdfix == 1 ? AMD_FIX_OFF : amdfix == 2 ? AMD_FIX_ON : AMD_FIX_AUTO;
             // [XCDE] issue #25: long-session corruption. Conservative mode: no async render worker.
-            static const char *ss_modes[] = {"Automático (activado)", "Desactivado", "Activado"};
+            static const char *ss_modes[] = {"Automático (desactivado)", "Desactivado", "Activado"};
             int ssfix = g_settings.session_fix == SESSION_FIX_OFF ? 1 : g_settings.session_fix == SESSION_FIX_ON ? 2 : 0;
             if (monado_combo(T("Compatibilidad de sesión larga (al reiniciar)"), &ssfix, TL(ss_modes, 3).p, 3))
                 g_settings.session_fix = ssfix == 1 ? SESSION_FIX_OFF : ssfix == 2 ? SESSION_FIX_ON : SESSION_FIX_AUTO;
