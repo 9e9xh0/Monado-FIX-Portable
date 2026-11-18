@@ -513,7 +513,7 @@ void quickstep_stats_ui_tick(Cpu*c){
     if(!show)quickstep_stats_ui_layout(c,s.panel,false);
     else quickstep_stats_ui_layout(c,s.panel,true);
 }
-static void close(Cpu*c,uint64_t key,int kind){
+static void release_owned(Cpu*c,uint64_t key,int kind){
     pthread_mutex_lock(&lock);Extra s=state;
     // UI/Seq teardown may follow an already-closed panel while its helper is
     // still returning. Retire all older local leases even when state is empty.
@@ -530,7 +530,7 @@ static void close(Cpu*c,uint64_t key,int kind){
         pthread_mutex_unlock(&lock);
     }
 }
-void quickstep_stats_ui_release_panel(Cpu*c){close(c,c->x[0],0);}
-void quickstep_stats_ui_release_sequence(Cpu*c){close(c,c->x[0],1);}
-void quickstep_stats_ui_release_ui(Cpu*c){close(c,c->x[0],2);}
+void quickstep_stats_ui_release_panel(Cpu*c){release_owned(c,c->x[0],0);}
+void quickstep_stats_ui_release_sequence(Cpu*c){release_owned(c,c->x[0],1);}
+void quickstep_stats_ui_release_ui(Cpu*c){release_owned(c,c->x[0],2);}
 RT_ON_RESET(quickstep_stats_ui_reset){pthread_mutex_lock(&lock);state=(Extra){0};++serial;parent_retired=0;failures=0;pthread_mutex_unlock(&lock);}

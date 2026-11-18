@@ -10,6 +10,107 @@
 #include <unistd.h>
 
 enum { CAPTURES = 32, OBSERVATIONS = 256, PENDING = 32, PATH_CAP = 1100 };
+
+#ifdef _WIN32
+// [XCDE] Windows has no directory descriptors or *at() calls (Monado II shipped this file on Linux only). A
+// "directory descriptor" here is a slot holding the directory's path, and each *at() call joins it with the name.
+// Files are opened in binary mode, and a rename replaces its destination, as POSIX rename does.
+#include <pthread.h>
+#include <stdarg.h>
+#include <windows.h>
+#define O_DIRECTORY 0x40000000
+#define O_CLOEXEC 0
+#define O_NOFOLLOW 0
+#define AT_SYMLINK_NOFOLLOW 0
+enum { QS_DIR_FD = 1 << 20, QS_DIRS = 16 };
+static char qs_dir_path[QS_DIRS][PATH_CAP];
+static bool qs_dir_used[QS_DIRS];
+static pthread_mutex_t qs_dir_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static const char *qs_dir(int fd) {
+    int i = fd - QS_DIR_FD;
+    return i >= 0 && i < QS_DIRS && qs_dir_used[i] ? qs_dir_path[i] : NULL;
+}
+static int qs_join(int dir, const char *name, char out[PATH_CAP]) {
+    pthread_mutex_lock(&qs_dir_lock);
+    const char *base = qs_dir(dir);
+    int n = base ? snprintf(out, PATH_CAP, "%s/%s", base, name) : -1;
+    pthread_mutex_unlock(&qs_dir_lock);
+    if (n < 0 || n >= PATH_CAP) { errno = base ? ENAMETOOLONG : EBADF; return -1; }
+    return 0;
+}
+static int qs_open(const char *path, int flags, ...) {
+    int mode = 0;
+    if (flags & O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
+    if (!(flags & O_DIRECTORY)) return _open(path, flags | O_BINARY, mode);
+    struct stat st;
+    if (stat(path, &st)) return -1;
+    if (!S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }
+    if (strlen(path) >= PATH_CAP) { errno = ENAMETOOLONG; return -1; }
+    pthread_mutex_lock(&qs_dir_lock);
+    for (int i = 0; i < QS_DIRS; i++)
+        if (!qs_dir_used[i]) {
+            qs_dir_used[i] = true;
+            snprintf(qs_dir_path[i], PATH_CAP, "%s", path);
+            pthread_mutex_unlock(&qs_dir_lock);
+            return QS_DIR_FD + i;
+        }
+    pthread_mutex_unlock(&qs_dir_lock);
+    errno = EMFILE;
+    return -1;
+}
+static int qs_openat(int dir, const char *name, int flags, ...) {
+    int mode = 0;
+    if (flags & O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
+    char path[PATH_CAP];
+    if (qs_join(dir, name, path)) return -1;
+    if ((flags & O_CREAT) && (flags & O_EXCL) && !(flags & O_DIRECTORY)) return _open(path, flags | O_BINARY, mode);
+    return qs_open(path, flags, mode);
+}
+static int qs_mkdirat(int dir, const char *name, int mode) {
+    (void)mode;
+    char path[PATH_CAP];
+    return qs_join(dir, name, path) ? -1 : _mkdir(path);
+}
+static int qs_fstatat(int dir, const char *name, struct stat *st, int flags) {
+    (void)flags;
+    char path[PATH_CAP];
+    return qs_join(dir, name, path) ? -1 : stat(path, st);
+}
+static int qs_unlinkat(int dir, const char *name, int flags) {
+    (void)flags;
+    char path[PATH_CAP];
+    return qs_join(dir, name, path) ? -1 : _unlink(path);
+}
+static int qs_renameat(int from_dir, const char *from, int to_dir, const char *to) {
+    char a[PATH_CAP], b[PATH_CAP];
+    if (qs_join(from_dir, from, a) || qs_join(to_dir, to, b)) return -1;
+    if (MoveFileExA(a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+    errno = GetLastError() == ERROR_FILE_NOT_FOUND ? ENOENT : EIO;
+    return -1;
+}
+static int qs_close(int fd) {
+    if (fd >= QS_DIR_FD && fd < QS_DIR_FD + QS_DIRS) {
+        pthread_mutex_lock(&qs_dir_lock);
+        qs_dir_used[fd - QS_DIR_FD] = false;
+        pthread_mutex_unlock(&qs_dir_lock);
+        return 0;
+    }
+    return _close(fd);
+}
+static int qs_fsync(int fd) {
+    return fd >= QS_DIR_FD && fd < QS_DIR_FD + QS_DIRS ? 0 : _commit(fd);  // (a directory has nothing to flush)
+}
+#define open qs_open
+#define openat qs_openat
+#define mkdirat qs_mkdirat
+#define fstatat qs_fstatat
+#define unlinkat qs_unlinkat
+#define renameat qs_renameat
+#undef fsync
+#define close qs_close
+#define fsync qs_fsync
+#endif
 static const char metadata_dir[] = ".monado-quickstep";
 static const uint8_t magic[8] = {'M','I','I','Q','S','0','1',0};
 
