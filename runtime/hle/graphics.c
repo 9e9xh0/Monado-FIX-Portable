@@ -4,7 +4,6 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include "../prop_lod.h"
-#include "../settings.h"
 static _Atomic uint64_t request;
 void xcde_graphics_publish(const GraphicsOptions *o) { atomic_store_explicit(&request,gfx_pack(o),memory_order_release); }
 // Per-view configurations can be reused without another memcpy. Restore only
@@ -24,8 +23,11 @@ typedef struct { uint64_t address; uint32_t changed; uint8_t before[OVERLAY_FIEL
 // (both byte-identical in field and menu captures) - it keeps its buffers either way. Off for xcde.ini taa = 0 (F1)
 // and under a temporal upscaler (FSR 3 / FSR 4 Lite / DLSS do the anti-aliasing; the game's TAA would blur their
 // jittered input, GitHub #14), switched with the upscaler too. This replaces the old boot-time lib_nx.ini tmaa=off edit.
-extern bool tmp_jitter_active(void);
-static bool xcde_game_taa_off(void) { return g_settings.taa_off || tmp_jitter_active(); }
+// The renderer publishes the decision every presented frame (runtime/nvn/vulkan/device.c), so this file needs neither
+// the settings nor the Vulkan side (the native tests link it alone).
+static _Atomic bool taa_off;
+void xcde_graphics_taa_off(bool off) { atomic_store_explicit(&taa_off,off,memory_order_release); }
+static bool xcde_game_taa_off(void) { return atomic_load_explicit(&taa_off,memory_order_acquire); }
 static GraphicsView views[128];
 static pthread_mutex_t view_lock=PTHREAD_MUTEX_INITIALIZER;
 RT_ON_RESET(graphics_view_reset) { memset(views,0,sizeof views); }
