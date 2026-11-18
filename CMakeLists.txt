@@ -115,8 +115,10 @@ add_custom_command(OUTPUT "${GEN_INC}/smaa_hlsl.inc"
 set_source_files_properties(runtime/nvn/smaa_data.c PROPERTIES OBJECT_DEPENDS "${GEN_INC}/smaa_hlsl.inc")
 
 if(NOT MONADO_RUNTIME_ONLY AND NOT MONADO_RELEASE)
-  file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${ROOT}/generated/main/*.c" "${ROOT}/generated/sdk/*.c")
-  if(NOT GAME_SOURCES OR NOT EXISTS "${ROOT}/generated/main/main_id.h")
+  # (another folder of tools/gen_all.py output, for A/B builds of a lifter change)
+  set(MONADO_GENERATED "${ROOT}/generated" CACHE PATH "Folder with the generated game code (tools/gen_all.py --out)")
+  file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${MONADO_GENERATED}/main/*.c" "${MONADO_GENERATED}/sdk/*.c")
+  if(NOT GAME_SOURCES OR NOT EXISTS "${MONADO_GENERATED}/main/main_id.h")
     message(FATAL_ERROR "generated/ is empty: run tools/gen_all.py --out generated first (it needs your dump in targets/), "
                         "or configure with -DMONADO_RUNTIME_ONLY=ON")
   endif()
