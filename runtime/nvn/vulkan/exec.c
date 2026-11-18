@@ -6514,6 +6514,27 @@ static VkImageView ui_backdrop_view(NvnTexture *win, float s, float ax, float ay
     return view;
 }
 
+// [XCDE] GitHub #30: is the current draw a piece of the character menus' 3D stage (see draw_, viewport)?
+static bool menu_stage_draw(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("XCDE_MENU_ROOM_STRETCH"); on = !e || atoi(e) != 0; }
+    if (!on) return false;
+    static uint64_t room_frame = ~0ull;
+    uint64_t vh = st.program->stages[0].code_hash, fh = st.program->stages[1].code_hash;
+    if (vh == 0x819e5a77f05e6b53ull && fh == 0xabbca1f7a525f972ull) {  // the room itself
+        room_frame = renderer_present_count();
+        return true;
+    }
+    if (room_frame != renderer_present_count()) return false;
+    // (the G-buffer pieces, then the glowing layer added over the lit image - the bright back wall)
+    static const uint64_t piece_vs[] = {0xf76418d1a58d9943ull, 0xdb75688f5366d5e7ull, 0x683e790278299336ull, 0x65ac31de96c7b34full,
+                                        0x4c582707c459b5ffull, 0x4dc566d48be006d9ull, 0x2c38457d6866d5e7ull, 0xc89f5b7c1e98aebcull,
+                                        0x3e42ace2a8a03437ull};
+    for (size_t i = 0; i < sizeof piece_vs / sizeof piece_vs[0]; i++)
+        if (vh == piece_vs[i]) return true;
+    return false;
+}
+
 static void draw_(CmdRec *r, bool indexed) {
     cliff_batch_pending.draws = 1;  // [XCDE] T-CLIFF-BATCH
     if (prof) prof_tp_ = SDL_GetTicksNS();
@@ -7172,13 +7193,28 @@ static void draw_(CmdRec *r, bool indexed) {
             if (vp_wide & 0x80) { float c = vy + vh * 0.5f; vh *= q; vy = c - vh * 0.5f; }
             else { float c = vx + vw * 0.5f; vw *= q; vx = c - vw * 0.5f; }
         }
+        // [XCDE] GitHub #30: the 3D stage behind the character in Change Equipment (a curved white room) is a finite set
+        // of meshes built for the 16:9 view. The menus' camera is widened (#24), so on a wider window it sees the stage's
+        // side walls (grey slabs a 16:9 player never sees) and past ~2.5:1 beyond them into the empty clear colour: two
+        // big black areas at 32:9. The stage's draws are stretched horizontally around the centre by the whole widening,
+        // so the sides show the same backdrop as at 16:9; the character keeps the widened projection (not stretched).
+        // The stage is recognised by its room piece (program 819e5a77f05e6b53 / abbca1f7a525f972, drawn only there);
+        // its other pieces by their vertex programs, only after the room in the same frame (one of them is a generic
+        // static-model program; the field is not rendered while the menu shows its stage). XCDE_MENU_ROOM_STRETCH=0 turns it off.
+        if (!ui_box && pass_sx > pass_sy * 1.01f && st.rt.ncolor && st.rt.color[0] && menu_stage_draw()) {
+            float q = pass_sx / pass_sy;  // (the widened view in 16:9 widths)
+            float c = vx + vw * 0.5f;
+            vw *= q; vx = c - vw * 0.5f;
+            static int logged;
+            if (!logged++) LOG("[wide] menu stage stretched x%.3f to the 16:9 backdrop (#30)\n", (double)q);
+        }
         set_viewport(vx, vy, vw, vh, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
-            LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
+            LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f | code %016llx %016llx\n",
                 vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, k, (unsigned long long)g_cur_fs_hash, sr.offset.x, sr.offset.y,
                 sr.extent.width, sr.extent.height, st.scissor[0][0], st.scissor[0][1], st.scissor[0][2], st.scissor[0][3], pass_w, pass_h,
-                vp_sx, vp_sy);
+                vp_sx, vp_sy, (unsigned long long)st.program->stages[0].code_hash, (unsigned long long)st.program->stages[1].code_hash);
         }
     }
     apply_scissor();
