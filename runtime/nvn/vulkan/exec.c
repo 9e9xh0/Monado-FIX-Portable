@@ -2278,6 +2278,52 @@ static const char *char_light_src(uint64_t code, const char *src, char **out_pat
     return buf;
 }
 
+// [XCDE] GitHub #151: the game's temporal AA resolve (guest fragment program 72c28c9b00, content hash 871a2b06f3eef033;
+// it runs whatever lib_nx.ini says about tmaa / AntiAliasing) reads the scene's neighbours at uv +- cb4[3].zw and the
+// closest-depth velocity at uv + d * cb4[4].zw. The game sets both to one texel of its 1280x720 frame. With render
+// scaling the textures have more texels but the offsets stay 1/1280, so at 3x the neighbourhood spans 3 pixels and the
+// resolve blurs the image back to 720p detail - worst on the menus' close-up 3D characters (equipment, party), which
+// came out softer at 4K than at 720p (mean gradient 6.3 vs 7.0; 7.7 with this patch). The offsets become one texel of
+// the textures they are used on (t2 / t6 the scene colour, t1 the velocity), keeping the game's sign; at 1x that is
+// the game's own value. XCDE_TMAA_TEXEL=0 keeps the game's offsets.
+static const char *tmaa_texel_src(uint64_t code, const char *src, char **out_patch) {
+    static int on = -1;
+    *out_patch = NULL;
+    if (on < 0) { const char *e = getenv("XCDE_TMAA_TEXEL"); on = !e || atoi(e) != 0; }
+    if (!on || !code || !src) return src;
+    if (hmix(1469598103934665603ull, (const void *)(uintptr_t)(code + 0x30), 0x200) != 0x871a2b06f3eef033ull) return src;
+    static const struct { const char *from, *to; } rep[] = {
+        {"as_f(cb4[3][2])", "(sign(as_f(cb4[3][2])) / float(textureSize(t2, 0).x))"},
+        {"as_f(cb4[3][3])", "(sign(as_f(cb4[3][3])) / float(textureSize(t2, 0).y))"},
+        {"as_f(cb4[4][2])", "(sign(as_f(cb4[4][2])) / float(textureSize(t1, 0).x))"},
+        {"as_f(cb4[4][3])", "(sign(as_f(cb4[4][3])) / float(textureSize(t1, 0).y))"},
+    };
+    size_t n = strlen(src), cap = n + 1;
+    int hits = 0;
+    for (const char *q = src; (q = strstr(q, "as_f(cb4[")); q++) cap += 64;
+    char *buf = malloc(cap), *o = buf;
+    if (!buf) return src;
+    for (const char *q = src; *q;) {
+        size_t i = 0;
+        for (; i < sizeof rep / sizeof rep[0]; i++) {
+            size_t k = strlen(rep[i].from);
+            if (!strncmp(q, rep[i].from, k)) { o += sprintf(o, "%s", rep[i].to); q += k; hits++; break; }
+        }
+        if (i == sizeof rep / sizeof rep[0]) *o++ = *q++;
+    }
+    *o = 0;
+    if (hits < 6) {  // (the six neighbour taps and the velocity tap: a different translation is left alone)
+        static int warned;
+        if (!__atomic_exchange_n(&warned, 1, __ATOMIC_RELAXED)) LOG("[tmaa] texel offsets not found (%d): left as the game's\n", hits);
+        free(buf);
+        return src;
+    }
+    static int reported;
+    if (!__atomic_exchange_n(&reported, 1, __ATOMIC_RELAXED)) LOG("[tmaa] resolve offsets follow the render scale (%d)\n", hits);
+    *out_patch = buf;
+    return buf;
+}
+
 static void compile_program(void *arg) {
     Prog *p = arg;
     size_t nv = 0, nf = 0;
@@ -2286,6 +2332,8 @@ static void compile_program(void *arg) {
     { const char *b = bloom_tent_src(p->src[1]); if (b) fs_src = b; }
     char *fs_char = NULL;
     { const char *b = char_light_src(p->src[1], fs_src, &fs_char); if (b) fs_src = b; }
+    char *fs_tmaa = NULL;
+    { const char *b = tmaa_texel_src(p->src[1], fs_src, &fs_tmaa); if (b) fs_src = b; }
     char *fs_over = NULL;
     if (getenv("XCDE_GLSL_DIR")) {  // [XCDE] debugging: a hand-edited fragment shader (<dir>/<code addr>_fs.glsl) replaces the translated one
         char path[512];
@@ -2314,7 +2362,7 @@ static void compile_program(void *arg) {
     unsigned miss0 = vk_spirv_tl_misses;
     uint32_t *sv = vk_glsl_to_spirv(vs_src, STAGE_VERTEX, "vs", &nv);
     uint32_t *sf = sv ? vk_glsl_to_spirv(fs_src, STAGE_FRAGMENT, "fs", &nf) : NULL;
-    free(fs_over); free(vs_over); free(fs_char);
+    free(fs_over); free(vs_over); free(fs_char); free(fs_tmaa);
     if (!sv || !sf) { free(sv); free(sf); atomic_store(&p->state, 2); return; }
     p->nbinds = vk_reflect(sv, nv, p->binds, MAX_BIND);
     p->nbinds += vk_reflect(sf, nf, p->binds + p->nbinds, MAX_BIND - p->nbinds);
