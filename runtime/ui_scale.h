@@ -158,7 +158,16 @@ typedef struct {
     UiScalePrev prev[UI_SCALE_MAX_ITEMS]; // the last frame's
     int nprev;
     UiScaleGroup chain;
+    bool bubble;     // the draws since a speech bubble's panel (ui_scale_frame_anchor) are the bubble's
+    float bx, by;    // that panel's point
 } UiScaleFrame;
+
+// GitHub #153: the area a speech bubble's pieces lie in, from its panel's point (the panel is drawn at its top-left
+// corner, a bit left of it: the line text, the name and its bar, the tail, an icon past the right end). Measured at
+// 1280x720 (XCDE_UI_SCALE_TRACE): line text from +80 / +34, the tail to +106 down, a shop icon to +542 across.
+static inline bool ui_scale_in_bubble_(const float b[4], float px, float py, float w, float h) {
+    return b[0] >= px - 0.04f * w && b[2] <= px + 0.5f * w && b[1] >= py - 0.08f * h && b[3] <= py + 0.3f * h;
+}
 
 static inline int ui_scale_find_(int *p, int i) { while (p[i] != i) i = p[i] = p[p[i]]; return i; }
 static inline bool ui_scale_near_(const float *a, const float *b, float m) {
@@ -251,14 +260,25 @@ static inline void ui_scale_frame_begin(UiScaleFrame *f, float w, float h) {
     f->nprev = n;
     f->ncur = 0;
     f->chain.valid = false;
+    f->bubble = false;
 }
 
 // this draw's anchor; false: not scaled (away from the frame's edges, a marker, a window, or it covers the frame)
 static inline bool ui_scale_frame_anchor(UiScaleFrame *f, const float box[4], float w, float h, float *ax, float *ay) {
     if (box[2] - box[0] >= 0.9f * w && box[3] - box[1] >= 0.9f * h) return false;
     // a box of no size: the draw's shape does not come from the positions read (an NPC's speech bubble panel, built
-    // from its constants) - its extent is unknown, it is left as drawn (and so is the text it holds, away from the edges)
-    if (box[2] - box[0] < 0.5f && box[3] - box[1] < 0.5f) return false;
+    // from its constants) - its extent is unknown, it is left as drawn
+    if (box[2] - box[0] < 0.5f && box[3] - box[1] < 0.5f) {
+        f->bubble = true; f->bx = box[0]; f->by = box[1];
+        return false;
+    }
+    // GitHub #153: the bubble's own pieces, drawn right after its panel (its text, name, tail), are left as drawn too.
+    // Near the frame's side they fell in the edge band and shrank towards a corner, out of the panel - on a wide
+    // window the widened view puts people there all the time. The first draw outside the bubble ends it (the HUD).
+    if (f->bubble) {
+        if (ui_scale_in_bubble_(box, f->bx, f->by, w, h)) return false;
+        f->bubble = false;
+    }
     // the last frame's element this one continues: the same box, else the one it overlaps most - at least half of the
     // larger area (2 px of slack for thin pieces): an element that was not drawn last frame (hint text blinking out for
     // a frame) took the state of a marker it merely touched

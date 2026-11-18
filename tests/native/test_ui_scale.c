@@ -169,6 +169,23 @@ int main(void) {
     float point[4] = {461, 183, 461, 183};
     for (int k = 0; k < 3; k++) { frame(hints, 2, hx, hy); assert(!ui_scale_frame_anchor(&f, point, W, H, &ax, &ay)); }
 
+    // GitHub #153: a bubble near the frame's right edge (a wide window, XCDE_UI_SCALE_TRACE): its pieces after the
+    // panel - an icon past the edge, the tail, the line text reaching the edge band, the name bar and name - keep the
+    // game's size; the minimap drawn next ends the bubble and is scaled as before, and so are the hints under it
+    const float sb[][4] = {
+        {813.6f, 169.7f, 813.6f, 169.7f},  // panel
+        {1285.2f, 136.5f, 1355.3f, 204.5f}, {1075.6f, 275.8f, 1106.5f, 318.3f}, {893.1f, 203.7f, 1310, 268.7f},
+        {853.6f, 161.1f, 853.6f, 161.1f},  // name bar
+        {874.7f, 163.9f, 935.8f, 196},
+        {1102, 2, 1278, 178}, {1027.2f, 195.5f, 1251.3f, 230.5f},  // minimap, hints
+    };
+    float sbx[8], sby[8];
+    for (int k = 0; k < UI_SCALE_SETTLE + 2; k++) frame(sb, 8, sbx, sby);
+    assert(all_(0, 6, false) && sc[6] && sc[7] && sbx[6] == W && sby[6] == 0 && sbx[7] == W && sby[7] == 0);
+    // (without a panel first the same text is the edge's HUD)
+    frame(sb + 3, 1, sbx, sby); frame(sb + 3, 1, sbx, sby);
+    assert(sc[0]);
+
     // the fold: X = gx * sx + ox, scaled by s around (ax, ay); the anchor stays put
     float sx = 1.5f, sy = 1.5f, ox = 0, oy = 0;
     ui_scale_fold(0.5f, 1920, 0, &sx, &sy, &ox, &oy);
