@@ -26,6 +26,7 @@
 #include "../../runtime/ui/theme.h"
 #include "../../runtime/ui/quality_controls.h"
 #include "../../runtime/ui_scale.h"  // GitHub #121
+#include "../../runtime/perf_overlay_opts.h"  // GitHub #147
 #include "../../runtime/grass_lod.h"
 #include "../../runtime/graphics_options.h"
 #include "update_check.h"  // GitHub #119
@@ -131,6 +132,7 @@ struct Cfg {
     int vulkan_api = 0;
     bool fps_overlay = true, upscaler_auto = true;
     int fps_overlay_style = 0;  // GitHub #39: 0 detailed, 1 simple (xcde.ini fps_overlay_style)
+    int fps_overlay_scale = 100, fps_overlay_pos = 0;  // GitHub #147: size in %, PERF_POS_* corner
     int gpu_index = -1;
     int quality_preset=0, dynamic_min_height=0, dynamic_max_height=0;
     unsigned effects_off=0;
@@ -604,6 +606,8 @@ static void load() {
         else if (!strcmp(k, "vulkan_api")) g.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g.fps_overlay = atoi(v) != 0;
         else if (!strcmp(k, "fps_overlay_style")) g.fps_overlay_style = !strcmp(v, "simple") ? 1 : 0;
+        else if (!strcmp(k, "fps_overlay_scale")) g.fps_overlay_scale = perf_overlay_scale_percent(atoi(v));
+        else if (!strcmp(k, "fps_overlay_position")) g.fps_overlay_pos = perf_overlay_pos_parse(v);
         else if (!strcmp(k, "gpu_uuid")) snprintf(g.gpu_uuid, sizeof g.gpu_uuid, "%s", v);
         else if (!strcmp(k, "gpu_index")) g.gpu_index = std::clamp(atoi(v), -1, 255);
         else if (!strcmp(k, "gpu_profile")) g.gpu_profile = !strcmp(v, "compatibility");
@@ -668,6 +672,8 @@ static bool save() {
     fprintf(f, "ui_scale = %d\n", ui_scale_percent(g.ui_scale));
     fprintf(f, "vulkan_api = %s\nfps_overlay = %d\n", g.vulkan_api == 12 ? "1.2" : g.vulkan_api == 13 ? "1.3" : g.vulkan_api == 14 ? "1.4" : "auto", g.fps_overlay);
     fprintf(f, "fps_overlay_style = %s\n", g.fps_overlay_style == 1 ? "simple" : "detailed");
+    fprintf(f, "fps_overlay_scale = %d\nfps_overlay_position = %s\n", perf_overlay_scale_percent(g.fps_overlay_scale),
+            perf_overlay_pos_ini[perf_overlay_pos_valid(g.fps_overlay_pos)]);
     fprintf(f, "upscale_quality = %s\nframe_gen = %d\n", k_uq_ini[g.uquality], g.frame_gen);
     if (g.sharpness < 0.0f) fprintf(f, "upscale_sharpness = default\n");
     else fprintf(f, "upscale_sharpness = %.3f\n", g.sharpness);
@@ -1931,6 +1937,14 @@ static void tab_graphics() {
         }
         ImGui::SetItemTooltip("%s", g.ui_lang ? "Simple: FPS and frame time. Detailed: frame-time graph, 1% / 0.1% lows, GPU and CPU load, memory and render resolution."
                                               : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, carga de GPU y CPU, memoria y resolución.");
+        if (mode) {  // GitHub #147: size and corner (also live in F1)
+            ImGui::SliderInt(g.ui_lang ? "Overlay size" : "Tamaño de la superposición", &g.fps_overlay_scale, PERF_OVERLAY_SCALE_MIN, PERF_OVERLAY_SCALE_MAX, "%d %%");
+            g.fps_overlay_scale = perf_overlay_scale_percent(g.fps_overlay_scale);
+            const char *pos_en[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+            const char *pos_es[] = {"Arriba a la izquierda", "Arriba a la derecha", "Abajo a la izquierda", "Abajo a la derecha"};
+            g.fps_overlay_pos = perf_overlay_pos_valid(g.fps_overlay_pos);
+            monado_combo(g.ui_lang ? "Overlay position" : "Posición de la superposición", &g.fps_overlay_pos, g.ui_lang ? pos_en : pos_es, PERF_POS_COUNT);
+        }
     }
     ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g.show_fps);
     ImGui::SeparatorText(T("Velocidad"));

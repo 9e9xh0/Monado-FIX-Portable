@@ -21,6 +21,7 @@
 #include <SDL3/SDL.h>
 #include "imgui.h"
 #include "theme.h"
+#include "../perf_overlay_opts.h"  // GitHub #147: size and corner
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -412,15 +413,37 @@ static void perf_chip(const char *label, const char *value, unsigned value_rgb, 
     ImGui::Dummy(size);
 }
 
+// GitHub #152: the value and note columns, and the panel's width, follow what the rows measured (in em, so the overlay
+// size does not matter): a long value ("10.5 GB / 31.8 GB") or note ("45°C  215 W  2790 MHz") no longer runs into the
+// next column or off the panel. prev is what this frame lays out with (last frame's widths: growing at once, shrinking
+// slowly so the panel doesn't twitch as numbers change); cur collects this frame's.
+struct PerfCols { float label, value, need; };
+static PerfCols perf_cols_prev, perf_cols_cur;
+static void perf_cols_frame(void) {
+    float *p = &perf_cols_prev.label, *c = &perf_cols_cur.label;
+    for (int i = 0; i < 3; i++) p[i] = c[i] >= p[i] ? c[i] : std::max(c[i], p[i] - 0.02f);
+    perf_cols_cur = PerfCols{0, 0, 0};
+}
+
 // A label / value / note row with an optional thin load bar under the value (frac < 0: none).
 static void perf_row(const char *label, const char *value, const char *note, float frac, unsigned rgb, float s) {
     float x0 = ImGui::GetCursorPosX(), em = ImGui::GetFontSize();
-    float col_value = x0 + em * 8.2f, col_note = x0 + em * 14.6f;
+    float off_value = std::max(8.2f, perf_cols_prev.label + 0.8f), off_note = off_value + std::max(6.4f, perf_cols_prev.value + 1.0f);
+    float col_value = x0 + em * off_value, col_note = x0 + em * off_note;
+    bool has_note = note && *note;
+    {
+        float lw = ImGui::CalcTextSize(label).x / em, vw = ImGui::CalcTextSize(value).x / em;
+        perf_cols_cur.label = std::max(perf_cols_cur.label, lw);
+        if (has_note) {  // (a value with nothing after it may run into the note column)
+            perf_cols_cur.value = std::max(perf_cols_cur.value, vw);
+            perf_cols_cur.need = std::max(perf_cols_cur.need, off_note + ImGui::CalcTextSize(note).x / em);
+        } else perf_cols_cur.need = std::max(perf_cols_cur.need, off_value + vw);
+    }
     ImGui::TextDisabled("%s", label);
     ImGui::SameLine(col_value);
     ImVec2 vp = ImGui::GetCursorScreenPos();
     ImGui::TextColored(monado_rgb(rgb == PERF_TEAL ? 0xE8EEF2 : rgb), "%s", value);
-    if (note && *note) { ImGui::SameLine(col_note); ImGui::TextDisabled("%s", note); }
+    if (has_note) { ImGui::SameLine(col_note); ImGui::TextDisabled("%s", note); }
     if (frac >= 0) {
         float w = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - vp.x;
         float y = vp.y + em + 2 * s, h = 2.5f * s;
@@ -487,14 +510,23 @@ static void perf_graph(float width, float height, int target, float s) {
 
 static void perf_fmt_gb(char *o, size_t n, double bytes) { snprintf(o, n, "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0)); }
 
-static void perf_draw_simple(float s, int target) {
-    ImGui::SetNextWindowPos(ImVec2(12 * s, 12 * s), ImGuiCond_Always);
+// GitHub #147: the overlay in the chosen corner of the window, 12 px (scaled) in from both edges
+static void perf_place(float s, uint32_t win_w, uint32_t win_h) {
+    int pos = perf_overlay_pos_valid(g_settings.fps_overlay_pos);
+    bool right = pos == PERF_POS_TOP_RIGHT || pos == PERF_POS_BOTTOM_RIGHT, bottom = pos >= PERF_POS_BOTTOM_LEFT;
+    ImGui::SetNextWindowPos(ImVec2(right ? (float)win_w - 12 * s : 12 * s, bottom ? (float)win_h - 12 * s : 12 * s), ImGuiCond_Always,
+                            ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
+}
+
+static void perf_draw_simple(float s, float k, int target, uint32_t win_w, uint32_t win_h) {
+    perf_place(s, win_w, win_h);
     ImGui::SetNextWindowBgAlpha(0.78f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * s, 6 * s));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, (ImGui::GetFontSize() + 12 * s) * 0.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, (ImGui::GetFontSize() * k + 12 * s) * 0.5f);
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.37f, 0.83f, 0.87f, 0.30f));
     ImGui::Begin("##perf-simple", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::SetWindowFontScale(k);
     if (fps_meter.fps > 0) {
         ImGui::TextColored(monado_rgb(perf_fps_rgb(fps_meter.fps, target)), "%.0f", fps_meter.fps);
         ImGui::SameLine(0, 4 * s); ImGui::TextDisabled("FPS");
@@ -506,10 +538,11 @@ static void perf_draw_simple(float s, int target) {
     ImGui::PopStyleVar(2);
 }
 
-static void perf_draw_detailed(float s, int target, uint32_t win_w, uint32_t win_h) {
+static void perf_draw_detailed(float s, float k, int target, uint32_t win_w, uint32_t win_h) {
     PerfSys sys = perf_sys_get();
-    const float em = ImGui::GetFontSize(), width = em * 21.0f;
-    ImGui::SetNextWindowPos(ImVec2(12 * s, 12 * s), ImGuiCond_Always);
+    perf_cols_frame();
+    const float em = ImGui::GetFontSize() * k, width = std::max(em * 21.0f, em * perf_cols_prev.need + 28 * s);  // (+ the window's padding)
+    perf_place(s, win_w, win_h);
     ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.84f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * s, 12 * s));
@@ -518,6 +551,7 @@ static void perf_draw_detailed(float s, int target, uint32_t win_w, uint32_t win
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.37f, 0.83f, 0.87f, 0.30f));
     ImGui::Begin("##perf-detailed", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
                  ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::SetWindowFontScale(k);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     char a[64], b[64];
 
@@ -533,8 +567,8 @@ static void perf_draw_detailed(float s, int target, uint32_t win_w, uint32_t win
         if (perf_font_big) ImGui::PopFont();
         ImVec2 big = ImGui::GetItemRectSize();
         // the small labels sit on the big number's baseline
-        float baseline = top.y + (perf_font_big ? perf_font_big->Ascent : ImGui::GetFont()->Ascent);
-        float small_top = baseline - ImGui::GetFont()->Ascent;
+        float baseline = top.y + (perf_font_big ? perf_font_big->Ascent : ImGui::GetFont()->Ascent) * k;
+        float small_top = baseline - ImGui::GetFont()->Ascent * k;
         ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
         float x = top.x + big.x + 6 * s;
         dl->AddText(ImVec2(x, small_top), dim, "FPS");
@@ -684,6 +718,7 @@ static void perf_overlay_draw(bool shown, float s, uint32_t win_w, uint32_t win_
     if (!shown) return;
     perf_update_view(SDL_GetTicksNS(), detailed);
     int target = perf_target_fps();
-    if (detailed) perf_draw_detailed(s, target, win_w, win_h);
-    else perf_draw_simple(s, target);
+    float k = perf_overlay_scale_percent(g_settings.fps_overlay_scale) / 100.0f;  // GitHub #147
+    if (detailed) perf_draw_detailed(s * k, k, target, win_w, win_h);
+    else perf_draw_simple(s * k, k, target, win_w, win_h);
 }
