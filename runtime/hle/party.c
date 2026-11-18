@@ -394,10 +394,15 @@ static void party_probe(Cpu *c, uint64_t frame) {
     }
 }
 
-// [XCDE] run speed multiplier (GitHub #100). The game's movement is collision-resolved before this runs (the pad read
-// happens at the start of a frame), so the extra distance is applied to the position the game will move from; its own
-// collision/ground handling still runs. Off by default: XCDE_RUN_SCALE (1.0 = original, for tests), xcde.ini run_speed
-// for players. The party scanner finds the leader's entity when the option is on.
+// [XCDE] run speed multiplier (GitHub #100). The game's own movement update (f_70004463b0, see the patch in
+// games/xcde/patches.py) computes the max horizontal velocity rate as `state * [movement + 0x11c]`; scale that
+// product so the controlled leader moves faster with its own collisions, ground handling and movement. The same
+// function also runs for followers and NPCs, so run_speed_leader() locates the field leader (the same slot_entity
+// path the earlier position version used) and caches its controller object; the helper also accepts the player
+// controller class as a fallback when a story switch leaves the field group behind. The patch passes the controller
+// being updated (x20), so only the leader's controller is scaled. No positions are written; the game computes the
+// movement itself.
+// Off by default: XCDE_RUN_SCALE (1.0 = original, for tests), xcde.ini run_speed for players.
 static float run_scale(void) {
     static int init;
     static float env = 1.0f;
@@ -414,40 +419,46 @@ static float run_scale(void) {
     return env_set ? env : g_settings.run_speed;
 }
 
-static void run_speed_tick(Cpu *c, uint64_t frame) {
-    float scale = run_scale();
-    static int reported;
-    if (!reported && scale > 1.0f) { reported = 1; LOG("[run] movement x%.2f (setting %.2f)\n", scale, g_settings.run_speed); }
-    if (!(scale > 1.0f)) return;
+// The field leader (slot 0 of the field group) whose update f_70004463b0 handles. It runs every frame and only reads:
+// no position writes, so the old menu/scene guards are not needed. The patch's x20 is the character's controller
+// object (the character object from slot_entity + 0x1908; its movement component is the +0x1a38 sibling), so cache
+// that controller, not the character object itself.
+#define RUN_CONTROLLER_OFFSET 0x1908ull
+// The controlled leader's controller class (f_70004463b0's x20): 0x7000b591b8, while followers/NPCs use
+// 0x7000b58660. It is the fallback when a story switch (prologue: Dunban -> Shulk) leaves the field group cache behind.
+#define PLAYER_CONTROLLER_VTABLE 0x7000b591b8ull
+static volatile uint64_t g_run_leader;
+
+static void run_speed_leader(Cpu *c) {
+    g_run_leader = 0;
+    if (!(run_scale() > 1.0f)) return;
     Found f;
     found_get(&f);
-    if (!player_in_control(found_one(&f, K_PLAYER)) || cutscene_playing(frame)) return;
     uint64_t fo = found_one(&f, K_FIELD);
     uint64_t g = fo ? field_group(c, fo + 0x20) : 0;
-    if (!g) return;
     uint64_t obj = 0;
-    uint64_t ent = slot_entity(c, fo, g, 0, &obj, NULL);
-    if (!ent) return;
-    volatile float *pos = (volatile float *)(uintptr_t)(ent + 0x110);
-    volatile float *mpos = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0x50);
-    static uint64_t last_ent;
-    static float last[3];
-    if (last_ent == ent) {
-        float dx = pos[0] - last[0], dy = pos[1] - last[1], dz = pos[2] - last[2];
-        // (a teleport / load / warp: leave it alone, do not multiply the jump)
-        if (fabsf(dx) < 2.0f && fabsf(dy) < 2.0f && fabsf(dz) < 2.0f) {
-            // Horizontal only: jumping/falling keeps the game's own gravity and landing.
-            pos[0] = last[0] + dx * scale;
-            pos[2] = last[2] + dz * scale;
-            // The movement object owns the position the game moves from next frame; its ground/collision snaps follow.
-            mpos[0] = pos[0], mpos[2] = pos[2];
-            volatile float *low = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0x78);
-            volatile float *high = (volatile float *)(uintptr_t)(obj + 0x1a38 + 0xa0);
-            low[0] = pos[0], low[2] = pos[2], high[0] = pos[0], high[2] = pos[2];
-        }
+    if (g) slot_entity(c, fo, g, 0, &obj, NULL);
+    if (obj) g_run_leader = obj + RUN_CONTROLLER_OFFSET;
+}
+
+// Called from the f_70004463b0 patch: rate is the game's rate (s8), speed its movement speed (s0) and obj the character
+// controller being updated (x20), as float bits / guest pointer. Only the controlled leader gets the multiplier: its
+// cached controller, or the player-controller class after a story switch moved control to another character.
+uint32_t xcde_run_speed_mul(uint32_t rate, uint32_t speed, uint64_t obj) {
+    float scale = run_scale();
+    static int reported;
+    float x, y, out;
+    memcpy(&x, &rate, 4);
+    memcpy(&y, &speed, 4);
+    out = x * y;
+    bool leader = obj && (obj == g_run_leader || *(volatile uint64_t *)(uintptr_t)obj == PLAYER_CONTROLLER_VTABLE);
+    if (scale > 1.0f && leader) {  // (also rejects a NaN setting: no movement change)
+        if (!reported) { reported = 1; LOG("[run] leader game speed x%.2f (setting %.2f)\n", scale, g_settings.run_speed); }
+        out *= scale;
     }
-    last_ent = ent;
-    last[0] = pos[0], last[1] = pos[1], last[2] = pos[2];
+    uint32_t bits;
+    memcpy(&bits, &out, 4);
+    return bits;
 }
 
 // [XCDE] Arts hotkeys (keyboard 1-8 / T, runtime/hle/input.c): select a palette slot and use it the way a player does -
@@ -1125,7 +1136,7 @@ void party_game_tick(Cpu *c, uint64_t frame) {
     ent_scan(c, frame);
     debug_fixed(c, frame);
     debug_tour(c, frame);
-    run_speed_tick(c, frame);
+    run_speed_leader(c);
     extern bool g_party_switch;
     static uint64_t at[16];
     static int nat = -1;
