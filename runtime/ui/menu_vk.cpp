@@ -358,6 +358,17 @@ static void ui(void) {
                 ImGui::SetItemTooltip("%s", g_settings.ui_lang
                     ? "Simple: FPS and frame time. Detailed: frame-time graph, 1% / 0.1% lows, GPU time and waits, GPU / CPU load, memory and render resolution."
                     : "Simple: FPS y tiempo por frame. Detallado: gráfica de tiempos, mínimos 1% / 0.1%, tiempo y esperas de GPU, carga de GPU / CPU, memoria y resolución.");
+                if (mode) {  // [XCDE] GitHub #147: size and corner, live
+                    bool en = g_settings.ui_lang != 0;
+                    int sc = perf_overlay_scale_percent(g_settings.fps_overlay_scale);
+                    if (ImGui::SliderInt(en ? "Overlay size" : "Tamaño de la superposición", &sc, PERF_OVERLAY_SCALE_MIN, PERF_OVERLAY_SCALE_MAX, "%d %%"))
+                        g_settings.fps_overlay_scale = perf_overlay_scale_percent(sc);
+                    const char *pos_en[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+                    const char *pos_es[] = {"Arriba a la izquierda", "Arriba a la derecha", "Abajo a la izquierda", "Abajo a la derecha"};
+                    int pos = perf_overlay_pos_valid(g_settings.fps_overlay_pos);
+                    if (monado_combo(en ? "Overlay position" : "Posición de la superposición", &pos, en ? pos_en : pos_es, PERF_POS_COUNT))
+                        g_settings.fps_overlay_pos = pos;
+                }
             }
             ImGui::Checkbox(T("Mostrar FPS en la barra de título"), &g_settings.show_fps);
             ImGui::SeparatorText(T("Velocidad"));

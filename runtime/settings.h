@@ -54,6 +54,8 @@ typedef struct {
     bool show_fps;
     bool fps_overlay;     // T258: on-screen native-FPS / frame-time display
     int fps_overlay_style; // GitHub #39: FPS_OVERLAY_DETAILED (default) or FPS_OVERLAY_SIMPLE (xcde.ini fps_overlay_style)
+    int fps_overlay_scale; // GitHub #147: overlay size in % (0 = 100; runtime/perf_overlay_opts.h)
+    int fps_overlay_pos;   // GitHub #147: PERF_POS_* corner (xcde.ini fps_overlay_position)
     bool upscaler_auto;   // T257: DLSS SR when the SDK confirms support, otherwise FSR 1
     int vulkan_api;       // T256: 0 automatic, 12/13/14 requested backend route (restart)
     int fps;  // [XCDE] frame rate target: 30 (the game's own), 60, 120, 144..., 0 = unlimited (runtime/hle/framepace.c)
