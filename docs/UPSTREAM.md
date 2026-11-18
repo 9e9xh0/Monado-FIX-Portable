@@ -34,4 +34,4 @@ Justificación en ADR 0011. Se conserva la atribución y no se incorpora código
 
 ## T271 — tamaño del HUD (GitHub #121)
 
-- `runtime/nvn/vulkan/exec.c`: la clasificación de la caja 16:9 también corre en 16:9 con el HUD escalado; ancla por draw y escala plegada en el mapeo del viewport. `runtime/settings.h`, `host/settings_ini.c`, `ui/menu_vk.cpp`, `tools/launcher/launcher.cpp`: ajuste `ui_scale`. Nuevo helper `runtime/ui_scale.h` (compartido con `tests/native/test_ui_scale.c`).
+- `runtime/nvn/vulkan/exec.c`: la clasificación de la caja 16:9 también corre en 16:9 con el HUD escalado; ancla por draw y escala plegada en el mapeo del viewport. `runtime/settings.h`, `host/settings_ini.c`, `ui/menu_vk.cpp`, `tools/launcher/launcher.cpp`: ajuste `ui_scale`. Nuevo helper `runtime/ui_scale.h` (compartido con `tests/native/test_ui_scale.c`). T271b: solo se escala el HUD de los bordes (popups, menús, diálogos y marcadores quedan como los dibuja el juego), grupos estables entre frames (anclas con histéresis) y `ui_backdrop_view` en `exec.c` (copia desplazada de la textura de la ventana para los draws del HUD reducido que leen la escena).

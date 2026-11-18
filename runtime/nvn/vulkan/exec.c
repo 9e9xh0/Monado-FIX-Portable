@@ -6326,7 +6326,7 @@ static float ui_scale_factor(void) {
 // The current UI draw's anchor (guest pixels) from its element box: the clip-space transform at the start of vertex
 // cbuf 3 applied to the vertex positions (attribute 0, two floats) of a small single-instance draw, or to its
 // origin alone (instanced text: the string's start). false: not a 2D UI element, or it covers the frame.
-static bool ui_scale_element(CmdRec *r, bool indexed, float *ax, float *ay) {
+static bool ui_scale_element(CmdRec *r, bool indexed, int ntex, float *ax, float *ay) {
     if (!st.ubuf[0][0].addr || st.ubuf[0][0].size < 32 || !st.rt.color[0]) return false;
     const float *m = (const float *)(uintptr_t)st.ubuf[0][0].addr;
     float lx0 = 0, ly0 = 0, lx1 = 0, ly1 = 0;
@@ -6380,16 +6380,90 @@ static bool ui_scale_element(CmdRec *r, bool indexed, float *ax, float *ay) {
                 (unsigned)st.ubuf[0][0].size);
         return false;
     }
-    static UiScaleFrame uf;  // (~20 KB)
+    static UiScaleFrame uf;  // (~60 KB)
     static uint64_t uf_frame = ~0ull;
     float fw = (float)st.rt.color[0]->width, fh = (float)st.rt.color[0]->height;
     if (uf_frame != renderer_present_count()) { uf_frame = renderer_present_count(); ui_scale_frame_begin(&uf, fw, fh); }
     bool ok = ui_scale_frame_anchor(&uf, box, fw, fh, ax, ay);
-    if (getenv("XCDE_UI_SCALE_LOG") && g_debug_frame)
-        LOG("[ui-scale] vs %llx inst %u count %u box %.0f %.0f %.0f %.0f -> %s %.0f %.0f\n",
-            (unsigned long long)st.program->stages[0].code_addr, inst, count, box[0], box[1], box[2], box[3],
-            ok ? "anchor" : "full", ok ? *ax : 0, ok ? *ay : 0);
+    // XCDE_UI_SCALE_TRACE=<frame>[,<n>]: the anchors of n frames (default 120) from that frame, without the debug dumps
+    static long tr_at = -1, tr_n = 120;
+    if (tr_at < 0) { const char *e = getenv("XCDE_UI_SCALE_TRACE"); tr_at = e ? atol(e) : 0; if (e && strchr(e, ',')) tr_n = atol(strchr(e, ',') + 1); }
+    uint64_t now = renderer_present_count();
+    if ((g_debug_frame && getenv("XCDE_UI_SCALE_LOG")) || (tr_at && now >= (uint64_t)tr_at && now < (uint64_t)(tr_at + tr_n))) {
+        unsigned pres = 0;  // (the units that sample the window texture)
+        for (int i = 0; i < ntex && i < 32; i++) pres |= (unsigned)tex_presented[1][i] << i;
+        LOG("[ui-scale] f %llu vs %llx fs %016llx inst %u count %u box %.1f %.1f %.1f %.1f -> %s %.0f %.0f window tex %x\n",
+            (unsigned long long)now, (unsigned long long)st.program->stages[0].code_addr,
+            (unsigned long long)st.program->stages[1].code_hash, inst, count, box[0], box[1], box[2], box[3],
+            ok ? "anchor" : "full", ok ? *ax : 0, ok ? *ay : 0, pres);
+    }
     return ok;
+}
+
+// [XCDE] GitHub #121: scene reads under a shrunk HUD element. Some HUD pieces show the scene behind them: the
+// "Location" popup renders its panel into a texture of its own while sampling the window texture at the panel's place,
+// and frosted pieces sample the window texture under themselves. Their sample positions come from the game's full-size
+// layout, so a shrunk piece showed the scene of its old, larger place (a magnified, shifted slab of the scene). Those
+// draws read a copy of the window texture moved the same way: copy(p) = window(s * p + (1 - s) * A), A the piece's
+// anchor in window pixels - what is now under each point of the piece.
+typedef struct { NvnTexture *t; float ax, ay, s; uint64_t frame; } UiBackdropUse;
+static UiBackdropUse ui_bd_use[16];  // render targets a shrunk HUD draw showed (their anchors), last frames
+static void ui_backdrop_note(NvnTexture *t, float ax, float ay, float s) {
+    uint64_t now = renderer_present_count();
+    int k = 0;
+    for (int i = 0; i < 16; i++) {
+        if (ui_bd_use[i].t == t) { k = i; break; }
+        if (ui_bd_use[i].frame < ui_bd_use[k].frame) k = i;
+    }
+    ui_bd_use[k] = (UiBackdropUse){t, ax, ay, s, now};
+}
+static const UiBackdropUse *ui_backdrop_find(NvnTexture *t) {
+    uint64_t now = renderer_present_count();
+    for (int i = 0; i < 16; i++)
+        if (t && ui_bd_use[i].t == t && now - ui_bd_use[i].frame <= 2) return &ui_bd_use[i];
+    return NULL;
+}
+static VkImageView ui_backdrop_view(NvnTexture *win, float s, float ax, float ay) {
+    static TexBackend d;
+    static VkImageView view;
+    static uint32_t view_gen;
+    extern uint32_t vk_view_gen;
+    TexBackend *src = vk_tex(naliases ? alias_read(win) : win, false);
+    if (!src || !src->image || src->samples > 1 || (src->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) return VK_NULL_HANDLE;
+    if (d.image && (d.width != src->width || d.height != src->height || d.format != src->format)) {
+        vk_views_forget(&d);
+        vk_defer_image(d.image, d.mem);
+        d.image = VK_NULL_HANDLE; d.mem = VK_NULL_HANDLE; view = VK_NULL_HANDLE;
+    }
+    vk_end_pass();
+    st.rt_dirty = true;
+    VkCommandBuffer cb = vk_cmd();
+    if (!d.image) {
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = src->format,
+                                .extent = {src->width, src->height, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+                                .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d.image, &d.mem, NULL));
+        d.format = src->format; d.width = src->width; d.height = src->height; d.depth = 1; d.layers = 1; d.levels = 1;
+        d.samples = 1; d.aspect = src->aspect; d.base_type = VK_IMAGE_VIEW_TYPE_2D;
+        vk_image_init_layout(cb, d.image, d.aspect);
+    }
+    vk_full_barrier(cb);
+    float w = (float)src->width, h = (float)src->height, x0 = (1 - s) * ax, y0 = (1 - s) * ay;
+    VkImageBlit bl = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                      .srcOffsets = {{(int32_t)lroundf(x0), (int32_t)lroundf(y0), 0}, {(int32_t)lroundf(x0 + s * w), (int32_t)lroundf(y0 + s * h), 1}},
+                      .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                      .dstOffsets = {{0, 0, 0}, {(int32_t)src->width, (int32_t)src->height, 1}}};
+    gp_mark(cb, "hud scale backdrop %ux%u", src->width, src->height);
+    vk_watch(d.image, "ui_backdrop_view vkCmdBlitImage");
+    vkCmdBlitImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, d.image, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, VK_FILTER_LINEAR);
+    vk_full_barrier(cb);
+    if (!view || view_gen != vk_view_gen) {
+        static const VkComponentMapping id = {0};
+        view = vk_image_view(&d, VK_IMAGE_VIEW_TYPE_2D, d.format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
+        view_gen = vk_view_gen;
+    }
+    return view;
 }
 
 static void draw_(CmdRec *r, bool indexed) {
@@ -6767,7 +6841,7 @@ static void draw_(CmdRec *r, bool indexed) {
                 if (n <= 127) wide_ui = (uint8_t)(n | (along_y ? 0x80 : 0));
             }
             // [XCDE] #121: the HUD only - menus are whole-screen layouts and stay as the game draws them
-            if (ui_s != 1.0f && !ui_menu) ui_s_draw = ui_scale_element(r, indexed, &ui_s_ax, &ui_s_ay);
+            if (ui_s != 1.0f && !ui_menu) ui_s_draw = ui_scale_element(r, indexed, pr->fi->ntex, &ui_s_ax, &ui_s_ay);
             else if (ui_s != 1.0f && g_debug_frame && getenv("XCDE_UI_SCALE_LOG"))
                 LOG("[ui-scale] vs %llx: menu open (not scaled)\n", (unsigned long long)st.program->stages[0].code_addr);
         }
@@ -6990,8 +7064,31 @@ static void draw_(CmdRec *r, bool indexed) {
         vp_ox = box_ox; vp_oy = box_oy;
         vp_wide = wide_ui;
     }
-    if (ui_s_draw)  // [XCDE] GitHub #121: the element shrunk around its anchor (window pixels; scissor follows)
-        ui_scale_fold(ui_s, ui_s_ax * vp_sx + vp_ox, ui_s_ay * vp_sy + vp_oy, &vp_sx, &vp_sy, &vp_ox, &vp_oy);
+    if (ui_s_draw) {  // [XCDE] GitHub #121: the element shrunk around its anchor (window pixels; scissor follows)
+        float wax = ui_s_ax * vp_sx + vp_ox, way = ui_s_ay * vp_sy + vp_oy;
+        ui_scale_fold(ui_s, wax, way, &vp_sx, &vp_sy, &vp_ox, &vp_oy);
+        // the scene under it: its own samples of the window texture, and textures it shows that sample the window
+        static int nobd = -1;
+        if (nobd < 0) nobd = getenv("XCDE_UI_SCALE_NO_BACKDROP") != NULL;
+        for (int i = 0; !nobd && i < pr->fi->ntex && i < 64; i++) {
+            NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
+            if (!t || pr->fi->tex[i].is_image || pr->fi->tex[i].type != TEXTYPE_2D) continue;
+            if (!tex_presented[1][i]) {  // (one the game renders: it may sample the window - the popup's panel)
+                if (t->backend && ((TexBackend *)t->backend)->gpu_owned) ui_backdrop_note(t, wax, way, ui_s);
+                continue;
+            }
+            VkImageView v = ui_backdrop_view(t, ui_s, wax, way);
+            if (v) fii[i].imageView = v;
+        }
+    } else if (ui_s != 1.0f && st.rt.ncolor && st.rt.color[0] && !renderer_texture_presented(st.rt.color[0])) {
+        const UiBackdropUse *u = ui_backdrop_find(st.rt.color[0]);  // (a texture a shrunk HUD draw shows)
+        for (int i = 0; u && i < pr->fi->ntex && i < 64; i++) {
+            if (!tex_presented[1][i] || pr->fi->tex[i].is_image || pr->fi->tex[i].type != TEXTYPE_2D) continue;
+            NvnTexture *t = shader_texture_object(1, &pr->fi->tex[i]);
+            VkImageView v = t ? ui_backdrop_view(t, u->s, u->ax, u->ay) : VK_NULL_HANDLE;
+            if (v) fii[i].imageView = v;
+        }
+    }
     float jx = 0, jy = 0;
     if (tmp_enabled()) tmp_draw(pr, &jx, &jy);  // [XCDE] temporal upscaling: the camera, the scene depth, jitter
     if (tmp_enabled()) {  // [XCDE] T215: the game's velocity buffer (gTVelocity of its temporal AA / AO / shadow passes)
