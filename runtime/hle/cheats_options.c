@@ -11,8 +11,7 @@ void xcde_cheats_publish(const Settings *settings) {
     XcdeCheats next = {.percent = {100, 100, 100, 100, 100, 100, 100}};
     if (settings) {
 #define COPY(kind, name) next.enabled[kind] = settings->cheat_##name; \
-    next.percent[kind] = settings->cheat_##name##_percent >= xcde_cheats_minimum_percent(kind) && \
-        settings->cheat_##name##_percent <= 2000 ? settings->cheat_##name##_percent : 100;
+    next.percent[kind] = xcde_cheat_percent_bound(settings->cheat_##name##_percent, xcde_cheats_minimum_percent(kind));
         COPY(XCDE_CHEAT_DAMAGE_DEALT, damage_dealt)
         COPY(XCDE_CHEAT_DAMAGE_RECEIVED, damage_received)
         COPY(XCDE_CHEAT_EXP, exp)

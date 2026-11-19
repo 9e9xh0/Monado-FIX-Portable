@@ -20,7 +20,10 @@ int main(int argc, char **argv) {
           "gpu_gpl = off\ngpu_memory_budget = 0\ngpu_preset = performance\ngpu_keep_heavy = 1\n"
           "occlusion = on\namd_fix = off\nsession_fix = off\n"
           "vulkan_api = 1.2\nfps_overlay = 0\nfps_overlay_style = simple\nupscaler = auto\n"
-          "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nui_scale = 30\nfps_overlay_scale = 300\nfps_overlay_position = bottom-right\nfuture_plugin = preserve this\n", f); fclose(f);
+          "stick_deadzone = 20\neffects_off = 1\nrun_speed = 1.5\nui_scale = 30\nfps_overlay_scale = 300\nfps_overlay_position = bottom-right\n"
+          "cheat_damage_dealt = 1\ncheat_damage_dealt_percent = 250\ncheat_exp = 2\ncheat_exp_percent = 1o0\n"
+          "cheat_enemy_health = true\ncheat_enemy_health_percent = 5\n"
+          "future_plugin = preserve this\n", f); fclose(f);
     settings_load();
     assert(g_settings.run_speed == 1.5f);  // [XCDE] GitHub #100
     assert(g_settings.ui_scale == 50);  // [XCDE] GitHub #121: below the minimum, clamped
@@ -35,14 +38,26 @@ int main(int argc, char **argv) {
     assert(g_settings.vulkan_api == 12 && !g_settings.fps_overlay && g_settings.upscaler_auto);
     assert(g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE);
     assert(g_settings.fps_overlay_scale == PERF_OVERLAY_SCALE_MAX && g_settings.fps_overlay_pos == PERF_POS_BOTTOM_RIGHT);  // GitHub #147
+    // [XCDE] Monado II cheats: 1 / true opt in, and malformed or under-the-floor multipliers (enemy health: 10 %) read as 1x
+    assert(g_settings.cheat_damage_dealt && g_settings.cheat_damage_dealt_percent == 250);
+    assert(!g_settings.cheat_exp && g_settings.cheat_exp_percent == 100);  // "2" is not 1 / true and "1o0" is not a number
+    assert(g_settings.cheat_enemy_health && g_settings.cheat_enemy_health_percent == 100);
     xcde_quality_apply(&g_settings,QUALITY_POTATO); g_settings.effects_off=EFFECT_SSR;
+    g_settings.cheat_sp = true; g_settings.cheat_sp_percent = 2500;  // [XCDE] out of range: saved as 1x
+    g_settings.cheat_no_fall_damage = true;
     g_settings.stick_deadzone = 0; settings_save();
-    g_settings.gpu_uuid[0] = 0; g_settings.gpu_index = -1; g_settings.fps_overlay_style = FPS_OVERLAY_DETAILED; settings_load();
+    g_settings.gpu_uuid[0] = 0; g_settings.gpu_index = -1; g_settings.fps_overlay_style = FPS_OVERLAY_DETAILED;
+    g_settings.cheat_damage_dealt = false; g_settings.cheat_damage_dealt_percent = 100; g_settings.cheat_enemy_health = false;
+    g_settings.cheat_sp = false; g_settings.cheat_sp_percent = 0; g_settings.cheat_no_fall_damage = false; settings_load();
     assert(g_settings.fps_overlay_style == FPS_OVERLAY_SIMPLE);  // [XCDE] GitHub #39
     assert(g_settings.gpu_uuid[0] && g_settings.gpu_index == 1 && g_settings.stick_deadzone == 0);
     assert(g_settings.vulkan_api == 12 && !g_settings.fps_overlay && !g_settings.upscaler_auto);
     assert(g_settings.quality_preset==QUALITY_POTATO && g_settings.gpu_performance);
     assert(g_settings.dynamic_min_height==360 && g_settings.dynamic_max_height==540);
+    // [XCDE] Monado II cheats round-trip through the file, with the out-of-range multiplier written as 1x
+    assert(g_settings.cheat_damage_dealt && g_settings.cheat_damage_dealt_percent == 250);
+    assert(g_settings.cheat_enemy_health && g_settings.cheat_enemy_health_percent == 100);
+    assert(g_settings.cheat_sp && g_settings.cheat_sp_percent == 100 && g_settings.cheat_no_fall_damage);
     // [XCDE] the old effect checkbox mask folds into the graphics choices at load (graphics_options.h)
     // (GFX_AO is 1 from the effects_off = 1 written above: #130's AO migration, now part of the general fold)
     assert(!g_settings.effects_off && g_settings.graphics.value[GFX_REFLECTIONS]==1 && g_settings.graphics.value[GFX_AO]==1);

@@ -498,7 +498,7 @@ static void ui(void) {
             ImGui::SetItemTooltip("%s", g_settings.ui_lang
                 ? "Multiplies the controlled character's movement speed (in battle too). The game still resolves the ground and collisions."
                 : "Multiplica la velocidad del personaje controlado (también en combate). El juego sigue resolviendo el suelo y las colisiones.");
-            if (monado_cheat_controls(&g_settings, g_settings.ui_lang == 1)) xcde_cheats_publish(&g_settings);
+            if (monado_cheat_controls(&g_settings, g_settings.ui_lang == 1, true)) xcde_cheats_publish(&g_settings);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

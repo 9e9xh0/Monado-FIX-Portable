@@ -1,7 +1,10 @@
 // [XCDE] Optional gameplay cheats, ported from Monado II (github.com/brendonbusker/Monado-II, MIT; LINUX-072/120/129).
-// Coherent live settings shared by the F1 menu and the guest hooks (runtime/hle/cheats_*.c, games/xcde/patches.py).
+// Coherent live settings shared by the launcher (Cheats tab) and the F1 menu (runtime/ui/cheats_controls.h), the INI
+// reader/writer (runtime/host/settings_ini.c) and the guest hooks (runtime/hle/cheats_*.c, games/xcde/patches.py).
 // Movement speed is not here: this recomp already has its own leader-only run speed (T270, runtime/hle/party.c).
 #pragma once
+#include <stdlib.h>
+#include <string.h>
 #include "settings.h"
 #ifdef __cplusplus
 extern "C" {
@@ -18,9 +21,24 @@ typedef struct {
     bool no_fall_damage;
 } XcdeCheats;
 
-// The cheat multipliers as (name, minimum %) for the settings loader / saver / F1 menu.
+// The cheat multipliers as (name, minimum %) for the settings loader / saver / frontends.
 #define XCDE_CHEAT_MULTIPLIERS(X) \
     X(damage_dealt, 0) X(damage_received, 0) X(exp, 0) X(ap, 0) X(sp, 0) X(gold, 0) X(enemy_health, 10)
+
+// xcde.ini parsing, shared by the game (settings_ini.c) and the launcher (tools/launcher/launcher.cpp): only an exact
+// 1 / true opts in; malformed or out-of-range percentages read as 1x instead of silently mis-scaling the game.
+static inline bool xcde_cheat_enabled(const char *value) {
+    return !strcmp(value, "1") || !strcmp(value, "true");
+}
+static inline int xcde_cheat_percent_bound(int value, int minimum) {
+    return value >= minimum && value <= 2000 ? value : 100;
+}
+static inline int xcde_cheat_percent(const char *value, int minimum) {
+    if (!*value) return 100;
+    for (const char *p = value; *p; ++p) if (*p < '0' || *p > '9') return 100;
+    if (strlen(value) > 4) return 100;
+    return xcde_cheat_percent_bound(atoi(value), minimum);
+}
 
 // Copies a complete, validated request. No lock is retained by the caller.
 XcdeCheats xcde_cheats_snapshot(void);

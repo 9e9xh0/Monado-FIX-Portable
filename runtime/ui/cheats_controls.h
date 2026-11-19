@@ -1,13 +1,16 @@
-// [XCDE] F1 menu Cheats controls (ported from Monado II, MIT; LINUX-120/129). Returns true when a value changed;
-// the caller publishes the settings to the guest hooks (xcde_cheats_publish) so they apply at once.
+// [XCDE] Cheats controls (ported from Monado II, MIT; LINUX-120/129), identical in the launcher's Cheats tab and the F1
+// menu. live: the game is running (F1), so changes apply at once and Apply remembers them for the next launch;
+// otherwise (launcher) they just get saved to xcde.ini for the next start. Returns true when a value changed; the F1
+// caller publishes the settings to the guest hooks (xcde_cheats_publish) so they apply at once.
 #pragma once
 #include "imgui.h"
 #include <algorithm>
 #include "../settings.h"
+#include "../cheats_options.h"
 
-static inline bool monado_cheat_controls(Settings *s, bool english) {
+static inline bool monado_cheat_controls(Settings *s, bool english, bool live) {
     bool changed = false;
-    ImGui::TextWrapped("%s", english
+    if (live) ImGui::TextWrapped("%s", english
         ? "Changes apply during play. Apply remembers them for the next launch."
         : "Los cambios se aplican durante la partida. Aplicar los recuerda al reiniciar.");
     ImGui::TextWrapped("%s", english ? "Enemy health: 0.1x to 20x. Other multipliers: 0x to 20x. Steps: 0.01x (1%); 1x is unchanged."
@@ -34,7 +37,7 @@ static inline bool monado_cheat_controls(Settings *s, bool english) {
         float amount_width = ImGui::CalcTextSize("20.00x").x;
         ImGui::SetNextItemWidth(std::max(40.f, std::min(360.f, ImGui::GetContentRegionAvail().x - amount_width -
                                                                    ImGui::GetStyle().ItemInnerSpacing.x)));
-        changed |= ImGui::SliderInt("##multiplier", percent[i], i == 6 ? 10 : 0, 2000, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+        changed |= ImGui::SliderInt("##multiplier", percent[i], xcde_cheats_minimum_percent(i), 2000, "%d%%", ImGuiSliderFlags_AlwaysClamp);
         ImGui::SetItemTooltip("%s", english ? "Ctrl-click to type a percentage. Ctrl+arrow adjusts 1%."
             : "Ctrl+clic para escribir un porcentaje. Ctrl+flecha ajusta 1%.");
         ImGui::SameLine(); ImGui::Text("%.2fx", *percent[i] / 100.0);
