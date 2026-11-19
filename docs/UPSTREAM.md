@@ -35,3 +35,24 @@ Justificación en ADR 0011. Se conserva la atribución y no se incorpora código
 ## T271 — tamaño del HUD (GitHub #121)
 
 - `runtime/nvn/vulkan/exec.c`: la clasificación de la caja 16:9 también corre en 16:9 con el HUD escalado; ancla por draw y escala plegada en el mapeo del viewport. `runtime/settings.h`, `host/settings_ini.c`, `ui/menu_vk.cpp`, `tools/launcher/launcher.cpp`: ajuste `ui_scale`. Nuevo helper `runtime/ui_scale.h` (compartido con `tests/native/test_ui_scale.c`). T271b: solo se escala el HUD de los bordes (popups, menús, diálogos y marcadores quedan como los dibuja el juego), grupos estables entre frames (anclas con histéresis) y `ui_backdrop_view` en `exec.c` (copia desplazada de la textura de la ventana para los draws del HUD reducido que leen la escena).
+
+## Corrupción de vértices y efectos con async en Windows (2026-11-10)
+
+Dos fallos distintos del renderer asíncrono de Windows producían el mismo tipo de síntoma: geometría y efectos
+dibujados con los datos de vértice de otro frame. Ambos son inertes en Linux, donde el vertex cache y el frame lag
+no están activos (RADV usa la ruta dma-buf GTT y `pt_init()` devuelve false sin `MEM_WRITE_WATCH`).
+
+- **T-VCACHE-ASYNC:** `vcache_lookup` (`nvn/vulkan/exec.c`) comparaba la elegibilidad de desalojo contra
+  `vk_pending_seq()`. Con el worker asíncrono, los entries del frame N parecían desalojables antes de que su
+  secuencia se enviara, y sus buffers device-local podían reutilizarse o liberarse mientras el command buffer del
+  worker aún los referenciaba: geometría/texturas incorrectas y corrupción gráfica. Ahora, con `backend_async()`,
+  se usa `vk_completed_seq()`; la ruta síncrona no cambia.
+- **T-FRAME-LAG-VCACHE:** con async + vertex cache + más de 60 FPS, `vc_flush` registraba la actualización como una
+  copia en tiempo de GPU desde memoria del guest; la copia podía ejecutarse después de que el juego reescribiera
+  esas páginas, así que los streams de efectos/partículas dibujaban el contenido de otro frame (quad grandes
+  estirados). Ahora, mientras el frame lag está activo, las páginas se copian al transient ring en el momento del
+  submit; `XCDE_VC_STAGE=0` restaura el comportamiento anterior para un A/B. Las lecturas de host que el frame lag
+  sigue haciendo un frame tarde (SSBOs y la copia `gfast` del path de compute) no están cubiertas.
+
+Detalle, síntomas, diagnósticos y límites: [evidence/windows-vertex-corruption/summary.md](evidence/windows-vertex-corruption/summary.md).
+
