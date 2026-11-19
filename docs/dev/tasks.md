@@ -1553,3 +1553,18 @@ Detalle: `docs/PERFORMANCE_UI.md`. Evidencia: `docs/evidence/performance_ui_2026
   - El panel de las burbujas de NPC (shader `e3e86ad310e794ea`) no tiene su forma en las posiciones de vértice: su caja
     salía como un punto y heredaba el ancla de la esquina mientras su texto quedaba igual. Una caja sin tamaño no se
     escala (comprobado con un guardado del usuario en el Distrito Comercial).
+
+- [x] T-VCACHE-ASYNC (2026-11-10) **Windows async vertex/index cache eviction.** The eviction probe and LRU
+  budget loop in `vcache_lookup` compared `used_seq` against `vk_pending_seq()`. With the async worker the game
+  thread records frame N+1 while the worker still submits frame N, so frame N's entries looked evictable and their
+  device-local buffers could be reused or freed under the worker's command buffer: wrong geometry, wrong textures
+  and graphical corruption. Fix: when `backend_async()` is active, eligibility uses `vk_completed_seq()`; the
+  synchronous path is unchanged. Inert on Linux (vertex cache disabled there). Detail:
+  [windows-vertex-corruption](../evidence/windows-vertex-corruption/summary.md).
+- [x] T-FRAME-LAG-VCACHE (2026-11-10) **Windows async frame-lag vertex refresh.** User's Windows report: battle
+  VFX beams/glows stretched, gone with `XCDE_ASYNC_RENDER=0`. `vc_flush` recorded the vertex cache's refresh as a
+  GPU-time copy from guest memory; with frame lag (async + vertex cache + >60 FPS) that copy could run after the
+  game rewrote the pages, so effect/particle streams drew another frame's contents. Fix: while frame lag is
+  latched, `vc_flush` stages the written pages through the transient ring at submit time; GPU-written-page entries
+  unchanged; `XCDE_VC_STAGE=0` is the A/B opt-out. Residual lag-time host reads (SSBOs, `gfast` copy-in) are not
+  covered. Detail: [windows-vertex-corruption](../evidence/windows-vertex-corruption/summary.md).
