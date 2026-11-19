@@ -52,20 +52,7 @@ static char *trim(char *s) {
     return s;
 }
 
-// [XCDE] cheats (Monado II port): only an exact 1 / true opts in; malformed or out-of-range percentages fall back to 1x.
-static bool cheat_enabled(const char *value) {
-    return !strcmp(value, "1") || !strcmp(value, "true");
-}
-static int cheat_percent_bound(int value, int minimum) {
-    return value >= minimum && value <= 2000 ? value : 100;
-}
-static int cheat_percent(const char *value, int minimum) {
-    if (!*value) return 100;
-    for (const char *p = value; *p; ++p) if (*p < '0' || *p > '9') return 100;
-    if (strlen(value) > 4) return 100;
-    return cheat_percent_bound(atoi(value), minimum);
-}
-
+// [XCDE] cheats (Monado II port): the key/value rules live in runtime/cheats_options.h, shared with the launcher.
 static int lang_index(const char *v) {
     for (int i = 0; i < N_LANGUAGES; i++)
         if (!strcmp(v, i ? g_language_codes[i] : "auto")) return i;
@@ -148,12 +135,12 @@ void settings_load(void) {
             g_settings.run_speed = x < 1.0f ? 1.0f : x > 2.0f ? 2.0f : x;
         }
 #define LOAD_CHEAT(name, minimum) \
-        else if (!strcmp(k, "cheat_" #name)) g_settings.cheat_##name = cheat_enabled(v); \
-        else if (!strcmp(k, "cheat_" #name "_percent")) g_settings.cheat_##name##_percent = cheat_percent(v, minimum);
+        else if (!strcmp(k, "cheat_" #name)) g_settings.cheat_##name = xcde_cheat_enabled(v); \
+        else if (!strcmp(k, "cheat_" #name "_percent")) g_settings.cheat_##name##_percent = xcde_cheat_percent(v, minimum);
         XCDE_CHEAT_MULTIPLIERS(LOAD_CHEAT)
 #undef LOAD_CHEAT
-        else if (!strcmp(k, "cheat_no_fall_damage")) g_settings.cheat_no_fall_damage = cheat_enabled(v);
-        else if (!strcmp(k, "quickstep_slot")) g_settings.quickstep_slot = cheat_enabled(v);  // [XCDE] Quick Step slot mod
+        else if (!strcmp(k, "cheat_no_fall_damage")) g_settings.cheat_no_fall_damage = xcde_cheat_enabled(v);
+        else if (!strcmp(k, "quickstep_slot")) g_settings.quickstep_slot = xcde_cheat_enabled(v);  // [XCDE] Quick Step slot mod
         else if (!strcmp(k, "ui_scale")) g_settings.ui_scale = ui_scale_percent(atoi(v));  // [XCDE] GitHub #121
         else if (!strcmp(k, "volume")) g_settings.volume = (float)atof(v) / 100.0f;
         else if (!strcmp(k, "movie_audio")) g_settings.movie_audio = atoi(v) != 0;
@@ -224,7 +211,7 @@ void settings_save(void) {
     fprintf(f, "party_switch = %d\n", g_party_switch);
     fprintf(f, "run_speed = %.2f\n", g_settings.run_speed);
 #define SAVE_CHEAT(name, minimum) fprintf(f, "cheat_" #name " = %d\ncheat_" #name "_percent = %d\n", \
-        g_settings.cheat_##name, cheat_percent_bound(g_settings.cheat_##name##_percent, minimum));
+        g_settings.cheat_##name, xcde_cheat_percent_bound(g_settings.cheat_##name##_percent, minimum));
     XCDE_CHEAT_MULTIPLIERS(SAVE_CHEAT)
 #undef SAVE_CHEAT
     fprintf(f, "cheat_no_fall_damage = %d\n", g_settings.cheat_no_fall_damage);

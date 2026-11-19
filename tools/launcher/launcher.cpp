@@ -25,6 +25,8 @@
 #include "../../runtime/ui/gpu_picker.h"
 #include "../../runtime/ui/theme.h"
 #include "../../runtime/ui/quality_controls.h"
+#include "../../runtime/ui/cheats_controls.h"  // [XCDE] cheats: the same controls as the F1 menu
+#include "../../runtime/cheats_options.h"      // [XCDE] cheats: shared xcde.ini parsing (xcde_cheat_enabled...)
 #include "../../runtime/ui_scale.h"  // GitHub #121
 #include "../../runtime/perf_overlay_opts.h"  // GitHub #147
 #include "../../runtime/grass_lod.h"
@@ -162,6 +164,8 @@ struct Cfg {
     bool party_switch = false;  // party mod: switch the controlled character (F2 / L2 + L1 / R1), runtime/hle/party.c
     bool quickstep_slot = false; // dedicated Quick Step gem slot (Monado II port), runtime/hle/quickstep_*.c
     float run_speed = 1.0f;     // GitHub #100: player movement multiplier (1, 1.5, 2), runtime/hle/party.c
+    Settings cheats = {};       // [XCDE] Monado II cheats: only the cheat_* fields are used; the controls, keys and
+                                // validation are the game's (runtime/cheats_options.h)
     bool show_fps = false;
     int fps = 0;  // index into k_fps_ini
     int volume = 100;
@@ -572,6 +576,11 @@ static void env_prune() {
 static void load() {
     g.nenv = 0;
     load_env();
+    // [XCDE] Monado II cheats: off, every multiplier at 1.00x (0 % would mean no damage / no awards once one is turned on)
+    g.cheats = {};
+    g.cheats.cheat_damage_dealt_percent = g.cheats.cheat_damage_received_percent = g.cheats.cheat_exp_percent =
+        g.cheats.cheat_ap_percent = g.cheats.cheat_sp_percent = g.cheats.cheat_gold_percent =
+        g.cheats.cheat_enemy_health_percent = 100;
     for (int i = 0; i < NPAD; i++) g.pad[i] = k_def_pad[i];
     for (int i = 0; i < NACT; i++) g.key[i] = k_def_key[i], g.key2[i] = k_def_key2[i];
     FILE *f = fopen(path("xcde.ini").c_str(), "r");
@@ -610,6 +619,13 @@ static void load() {
         else if (!strcmp(k, "party_switch")) g.party_switch = atoi(v) != 0;
         else if (!strcmp(k, "quickstep_slot")) g.quickstep_slot = !strcmp(v, "1") || !strcmp(v, "true");
         else if (!strcmp(k, "run_speed")) { float x = (float)atof(v); g.run_speed = x < 1.0f ? 1.0f : x > 2.0f ? 2.0f : x; }
+        // [XCDE] Monado II cheats: the same keys and value rules as the game (runtime/host/settings_ini.c)
+#define LOAD_CHEAT(name, minimum) \
+        else if (!strcmp(k, "cheat_" #name)) g.cheats.cheat_##name = xcde_cheat_enabled(v); \
+        else if (!strcmp(k, "cheat_" #name "_percent")) g.cheats.cheat_##name##_percent = xcde_cheat_percent(v, minimum);
+        XCDE_CHEAT_MULTIPLIERS(LOAD_CHEAT)
+#undef LOAD_CHEAT
+        else if (!strcmp(k, "cheat_no_fall_damage")) g.cheats.cheat_no_fall_damage = xcde_cheat_enabled(v);
         else if (!strcmp(k, "show_fps")) g.show_fps = atoi(v) != 0;
         else if (!strcmp(k, "vulkan_api")) g.vulkan_api = !strcmp(v, "1.2") ? 12 : !strcmp(v, "1.3") ? 13 : !strcmp(v, "1.4") ? 14 : 0;
         else if (!strcmp(k, "fps_overlay")) g.fps_overlay = atoi(v) != 0;
@@ -693,6 +709,12 @@ static bool save() {
     fprintf(f, "party_switch = %d\n", g.party_switch);
     fprintf(f, "quickstep_slot = %d\n", g.quickstep_slot);
     fprintf(f, "run_speed = %.2f\n", g.run_speed);
+    // [XCDE] Monado II cheats: out-of-range multipliers are written as 1.00x, as the game does (settings_ini.c)
+#define SAVE_CHEAT(name, minimum) fprintf(f, "cheat_" #name " = %d\ncheat_" #name "_percent = %d\n", \
+        g.cheats.cheat_##name, xcde_cheat_percent_bound(g.cheats.cheat_##name##_percent, minimum));
+    XCDE_CHEAT_MULTIPLIERS(SAVE_CHEAT)
+#undef SAVE_CHEAT
+    fprintf(f, "cheat_no_fall_damage = %d\n", g.cheats.cheat_no_fall_damage);
     fprintf(f, "volume = %d\nmovie_audio = %d\nlanguage = %s\nfps = %s\n", g.volume, g.movie_audio, k_lang_ini[g.lang], k_fps_ini[g.fps]);
     for (const Mod &m : g_mods) if (!is_icon_mod(m.name)) fprintf(f, "mod_%s = %d", m.name.c_str(), m.on), fputc(10, f);
     int ic = icons_effective(g.icons);
@@ -2102,7 +2124,8 @@ static void tab_controls() {
     }
 }
 
-// Cheats: options that are not part of the original game (runtime/hle/party.c reads them from xcde.ini at launch).
+// Cheats: options that are not part of the original game. The game reads them from xcde.ini at launch
+// (runtime/host/settings_ini.c); the F1 menu changes the same keys live.
 static void tab_cheats() {
     ImGui::TextDisabled(g.ui_lang ? "Options that are not part of the original game. They apply when the game starts."
                                   : "Opciones que no forman parte del juego original. Se aplican al iniciar el juego.");
@@ -2115,6 +2138,11 @@ static void tab_cheats() {
     ImGui::SetItemTooltip(T("Multiplica la velocidad del personaje controlado (también en combate). El juego sigue\n"
                             "resolviendo el suelo y las colisiones; las animaciones mantienen su ritmo original.\n"
                             "También se puede cambiar dentro del juego, en el menú, pestaña Trucos."));
+    // [XCDE] Monado II cheats, with the F1 menu's own controls (runtime/ui/cheats_controls.h): Combat, Rewards and
+    // Exploration. live = false: the game is not running, so they apply at the next launch.
+    monado_cheat_controls(&g.cheats, g.ui_lang != 0, false);
+    ImGui::TextWrapped("%s", g.ui_lang ? "You can also change them in the F1 menu during play, where they apply at once."
+                                       : "También puedes cambiarlos en el menú F1 durante la partida, donde se aplican al momento.");
 }
 
 // Mods: every folder in mods/ with a romfs/ inside (runtime/services/romfs_virtual.c applies them alphabetically,
